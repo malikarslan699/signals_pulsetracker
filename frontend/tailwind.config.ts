@@ -31,6 +31,9 @@ const config: Config = {
         danger:  "rgb(var(--color-short) / <alpha-value>)",
         info:    "rgb(var(--color-blue) / <alpha-value>)",
       },
+      fontSize: {
+        "2xs": ["0.625rem", { lineHeight: "0.875rem" }],
+      },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],

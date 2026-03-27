@@ -1,49 +1,48 @@
 "use client";
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Signal } from "@/types/signal";
-import { formatPrice, formatTimeAgo, getStatusLabel, getStatusColor } from "@/lib/formatters";
-import { History, TrendingUp, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Clock, Activity } from "lucide-react";
-import Link from "next/link";
+import { formatPrice, formatTimeAgo } from "@/lib/formatters";
+import { TrendingUp, TrendingDown, Activity, Target, Crosshair, Clock, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { KPIChip } from "@/components/terminal/KPIChip";
+import { Panel } from "@/components/terminal/Panel";
+import { DirectionBadge, StatusBadge, ConfidenceBadge } from "@/components/terminal/Badges";
+import { cn } from "@/lib/utils";
 
 type SortKey = "confidence" | "entry" | "take_profit_1" | "stop_loss" | "pnl_pct" | "fired_at";
 type SortDir = "asc" | "desc" | null;
 
+const COL = "grid-cols-[1fr_62px_46px_52px_88px_80px_80px_56px_72px_60px]";
+
 function SortIcon({ dir }: { dir: SortDir }) {
-  if (!dir) return <ArrowUpDown className="w-3.5 h-3.5 opacity-40" />;
-  if (dir === "asc") return <ArrowUp className="w-3.5 h-3.5 text-purple" />;
-  return <ArrowDown className="w-3.5 h-3.5 text-purple" />;
+  if (!dir) return <ArrowUpDown className="w-3 h-3 opacity-40" />;
+  if (dir === "asc") return <ArrowUp className="w-3 h-3 text-purple" />;
+  return <ArrowDown className="w-3 h-3 text-purple" />;
 }
 
-function SortTh({
-  label, sortKey, current, dir, onSort, right,
-}: {
+function SortTh({ label, sortKey, current, dir, onSort }: {
   label: string; sortKey: SortKey; current: SortKey | null; dir: SortDir;
-  onSort: (k: SortKey) => void; right?: boolean;
+  onSort: (k: SortKey) => void;
 }) {
   return (
-    <th
-      className={`px-3 py-2 font-medium cursor-pointer select-none hover:text-text-primary transition-colors ${right ? "text-right" : ""}`}
-      onClick={() => onSort(sortKey)}
-    >
-      <span className={`flex items-center gap-1 ${right ? "justify-end" : ""}`}>
-        <span className="text-text-muted">{label}</span>
-        <SortIcon dir={current === sortKey ? dir : null} />
-      </span>
-    </th>
+    <button onClick={() => onSort(sortKey)} className="flex items-center gap-1 justify-end hover:text-text-primary transition-colors cursor-pointer">
+      <span>{label}</span>
+      <SortIcon dir={current === sortKey ? dir : null} />
+    </button>
   );
 }
 
 export default function HistoryPage() {
-  const [direction, setDirection] = useState<string>("ALL");
-  const [timeframe, setTimeframe] = useState<string>("ALL");
-  const [page, setPage] = useState(1);
+  const router = useRouter();
+  const [direction, setDirection] = useState("ALL");
+  const [timeframe, setTimeframe] = useState("ALL");
   const [sortKey, setSortKey] = useState<SortKey | null>("fired_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["signal-history", direction, timeframe, page],
+    queryKey: ["signal-history"],
     queryFn: () => api.get(`/api/v1/signals/history?days=90`).then((r) => r.data),
   });
 
@@ -71,162 +70,131 @@ export default function HistoryPage() {
     });
   }, [filtered, sortKey, sortDir]);
 
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      if (sortDir === "desc") setSortDir("asc");
+      else if (sortDir === "asc") { setSortKey(null); setSortDir(null); }
+      else setSortDir("desc");
+    } else { setSortKey(key); setSortDir("desc"); }
+  };
+
   const total = signals.length;
   const wins = signals.filter((s) => s.status?.includes("tp")).length;
   const losses = signals.filter((s) => s.status === "sl_hit").length;
   const expired = signals.filter((s) => s.status === "expired" || s.status === "invalidated").length;
   const closed = wins + losses;
   const winRate = closed > 0 ? Math.round((wins / closed) * 100) : 0;
-  const winRateColor = winRate >= 65 ? "text-long" : winRate >= 50 ? "text-gold" : "text-short";
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      if (sortDir === "desc") setSortDir("asc");
-      else if (sortDir === "asc") { setSortKey(null); setSortDir(null); }
-      else setSortDir("desc");
-    } else {
-      setSortKey(key); setSortDir("desc");
-    }
-  };
+  const winRateTrend: "up" | "down" | "neutral" = winRate >= 60 ? "up" : winRate >= 40 ? "neutral" : "down";
 
   return (
-    <div className="space-y-6 pb-20 lg:pb-6">
-      <div>
-        <h1 className="text-2xl font-bold text-text-primary">Signal History</h1>
-        <p className="text-text-muted text-sm mt-1">All past signals with outcomes</p>
+    <div className="space-y-2 pb-20 lg:pb-4">
+      <h1 className="text-xs font-bold text-text-muted uppercase tracking-widest">Signal History · Last 90 Days</h1>
+
+      {/* KPI Strip */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <KPIChip label="Total" value={total} icon={<Activity className="h-3 w-3" />} />
+        <KPIChip label="Win Rate" value={`${winRate}%`} icon={<TrendingUp className="h-3 w-3" />} trend={winRateTrend} />
+        <KPIChip label="TP Hits" value={wins} icon={<Target className="h-3 w-3" />} trend="up" />
+        <KPIChip label="SL Hits" value={losses} icon={<Crosshair className="h-3 w-3" />} trend="down" />
+        <KPIChip label="Expired" value={expired} icon={<Clock className="h-3 w-3" />} />
+        {closed > 0 && <KPIChip label="W/L" value={`${wins}/${losses}`} />}
       </div>
 
-      {/* Win/Loss Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="bg-surface border border-border rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold font-mono text-text-primary">{total}</p>
-          <p className="text-xs text-text-muted mt-1">Total</p>
-        </div>
-        <div className="bg-surface border border-long/20 rounded-xl p-4 text-center">
-          <p className={`text-2xl font-bold font-mono ${winRateColor}`}>{winRate}%</p>
-          <p className="text-xs text-text-muted mt-1">Win Rate</p>
-          {closed > 0 && (
-            <p className="text-xs text-text-faint mt-0.5">{wins}W / {losses}L</p>
-          )}
-        </div>
-        <div className="bg-surface border border-long/20 rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold font-mono text-long">{wins}</p>
-          <p className="text-xs text-text-muted mt-1">TP Hits</p>
-        </div>
-        <div className="bg-surface border border-short/20 rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold font-mono text-short">{losses}</p>
-          <p className="text-xs text-text-muted mt-1">SL Hits</p>
-        </div>
-        <div className="bg-surface border border-border rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold font-mono text-text-muted">{expired}</p>
-          <p className="text-xs text-text-muted mt-1">Expired</p>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-3">
-        <div className="flex items-center gap-1 bg-surface border border-border rounded-lg p-1">
-          {["ALL", "LONG", "SHORT"].map((d) => (
-            <button key={d} onClick={() => { setDirection(d); setPage(1); }}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition-all ${
-                direction === d
-                  ? d === "LONG" ? "bg-long text-white" : d === "SHORT" ? "bg-short text-white" : "bg-purple text-white"
-                  : "text-text-muted hover:text-text-primary"
-              }`}>{d}</button>
-          ))}
-        </div>
-        <div className="flex items-center gap-1 bg-surface border border-border rounded-lg p-1">
-          {["ALL", "5m", "15m", "1H", "4H"].map((tf) => (
-            <button key={tf} onClick={() => { setTimeframe(tf); setPage(1); }}
-              className={`px-3 py-1.5 rounded text-sm transition-all ${
-                timeframe === tf ? "bg-blue text-white" : "text-text-muted hover:text-text-primary"
-              }`}>{tf}</button>
-          ))}
-        </div>
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-2">{Array.from({ length: 10 }).map((_, i) => (
-          <div key={i} className="h-14 bg-surface border border-border rounded-lg animate-pulse" />
-        ))}</div>
-      ) : isError ? (
-        <div className="bg-surface border border-border rounded-xl p-8 text-center text-text-muted">
-          <p>Signal history requires a Pro subscription.</p>
-          <Link href="/pricing" className="text-purple text-sm mt-2 block hover:underline">Upgrade to Pro →</Link>
-        </div>
-      ) : signals.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-text-muted">
-          <History className="w-12 h-12 mb-4 opacity-30" /><p>No signals found</p>
-        </div>
-      ) : (
-        <div className="bg-surface border border-border rounded-xl overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10">
-                <tr className="border-b border-border bg-surface-2/95 backdrop-blur-sm">
-                  <th className="text-left px-4 py-3 text-text-muted font-medium">Pair</th>
-                  <th className="text-left px-4 py-3 text-text-muted font-medium">Dir</th>
-                  <th className="text-left px-4 py-3 text-text-muted font-medium">TF</th>
-                  <SortTh label="Conf" sortKey="confidence" current={sortKey} dir={sortDir} onSort={handleSort} right />
-                  <SortTh label="Entry" sortKey="entry" current={sortKey} dir={sortDir} onSort={handleSort} right />
-                  <SortTh label="TP1" sortKey="take_profit_1" current={sortKey} dir={sortDir} onSort={handleSort} right />
-                  <SortTh label="SL" sortKey="stop_loss" current={sortKey} dir={sortDir} onSort={handleSort} right />
-                  <th className="text-center px-4 py-3 text-text-muted font-medium">Status</th>
-                  <SortTh label="PnL" sortKey="pnl_pct" current={sortKey} dir={sortDir} onSort={handleSort} right />
-                  <SortTh label="Time" sortKey="fired_at" current={sortKey} dir={sortDir} onSort={handleSort} right />
-                </tr>
-              </thead>
-              <tbody>
-                {signals.map((signal) => {
-                  const isLong = signal.direction === "LONG";
-                  const pnlN = signal.pnl_pct != null ? parseFloat(String(signal.pnl_pct)) : null;
-                  const isWin = signal.status?.includes("tp");
-                  const isLoss = signal.status === "sl_hit";
-                  return (
-                    <tr key={signal.id} className={`border-b border-border transition-colors ${isWin ? "row-win" : isLoss ? "row-loss" : "hover:bg-surface-2/60"}`}>
-                      <td className="px-4 py-3">
-                        <Link href={`/signal/${signal.id}`} className="font-mono font-semibold text-text-primary hover:text-purple">
-                          {signal.symbol}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`flex items-center gap-1 text-xs font-medium ${isLong ? "text-long" : "text-short"}`}>
-                          {isLong ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                          {signal.direction}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-text-muted">{signal.timeframe}</td>
-                      <td className="px-4 py-3 text-right font-mono text-text-primary">{signal.confidence}</td>
-                      <td className="px-4 py-3 text-right font-mono text-text-secondary">{formatPrice(signal.entry)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-long">{formatPrice(signal.take_profit_1)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-short">{formatPrice(signal.stop_loss)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
-                          signal.status?.includes("tp")
-                            ? "bg-long/10 text-long border-long/20"
-                            : signal.status === "sl_hit"
-                            ? "bg-short/10 text-short border-short/20"
-                            : signal.status === "active"
-                            ? "bg-blue/10 text-blue border-blue/20"
-                            : "bg-surface-2 text-text-muted border-border"
-                        }`}>
-                          {getStatusLabel(signal.status)}
-                        </span>
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono text-sm ${pnlN != null && pnlN > 0 ? "text-long" : pnlN != null && pnlN < 0 ? "text-short" : "text-text-muted"}`}>
-                        {pnlN != null ? `${pnlN > 0 ? "+" : ""}${pnlN.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right text-text-muted text-xs">{formatTimeAgo(signal.fired_at)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      <Panel noPad>
+        {/* Filters */}
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+          <div className="flex items-center gap-0.5">
+            {["ALL", "LONG", "SHORT"].map((d) => (
+              <button key={d} onClick={() => setDirection(d)}
+                className={`filter-pill ${direction === d ? (d === "LONG" ? "!bg-long !text-white" : d === "SHORT" ? "!bg-short !text-white" : "filter-pill-active") : ""}`}>
+                {d}
+              </button>
+            ))}
           </div>
-          <div className="px-4 py-3 border-t border-border text-xs text-text-muted">
-            Showing {signals.length} resolved signals (last 90 days) · Click column headers to sort
+          <div className="flex items-center gap-0.5">
+            {["ALL", "5m", "15m", "1H", "4H"].map((tf) => (
+              <button key={tf} onClick={() => setTimeframe(tf)}
+                className={`filter-pill ${timeframe === tf ? "filter-pill-active" : ""}`}>
+                {tf}
+              </button>
+            ))}
+          </div>
+          <span className="ml-auto text-2xs text-text-muted font-mono">{signals.length} records</span>
+        </div>
+
+        {/* Column headers */}
+        <div className={`grid ${COL} px-3 py-1.5 text-2xs font-semibold text-text-muted uppercase tracking-wider border-b border-border bg-surface-2/40`}>
+          <span>Pair</span>
+          <span>Dir</span>
+          <span>TF</span>
+          <div className="flex justify-end">
+            <SortTh label="Conf" sortKey="confidence" current={sortKey} dir={sortDir} onSort={handleSort} />
+          </div>
+          <div className="flex justify-end">
+            <SortTh label="Entry" sortKey="entry" current={sortKey} dir={sortDir} onSort={handleSort} />
+          </div>
+          <span className="text-right">TP1</span>
+          <span className="text-right">SL</span>
+          <span>Status</span>
+          <div className="flex justify-end">
+            <SortTh label="PnL" sortKey="pnl_pct" current={sortKey} dir={sortDir} onSort={handleSort} />
+          </div>
+          <div className="flex justify-end">
+            <SortTh label="Time" sortKey="fired_at" current={sortKey} dir={sortDir} onSort={handleSort} />
           </div>
         </div>
-      )}
+
+        {isLoading ? (
+          Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className={`grid ${COL} px-3 py-2.5 border-b border-border/40 animate-pulse gap-2`}>
+              {Array.from({ length: 10 }).map((_, j) => <div key={j} className="h-2 bg-surface-2 rounded" />)}
+            </div>
+          ))
+        ) : isError ? (
+          <div className="p-8 text-center text-text-muted text-xs">
+            Signal history requires a Pro subscription.
+          </div>
+        ) : signals.length === 0 ? (
+          <div className="p-12 text-center text-text-muted text-xs">No signals found</div>
+        ) : (
+          signals.map((s) => {
+            const pnlN = s.pnl_pct != null ? parseFloat(String(s.pnl_pct)) : null;
+            return (
+              <div
+                key={s.id}
+                onClick={() => router.push(`/signal/${s.id}`)}
+                className={cn(
+                  `data-row ${COL}`,
+                  s.status?.includes("tp") && "row-win",
+                  s.status === "sl_hit" && "row-loss"
+                )}
+              >
+                <span className="font-bold text-text-primary truncate">{s.symbol}</span>
+                <DirectionBadge direction={s.direction as "LONG" | "SHORT"} />
+                <span className="text-text-muted">{s.timeframe}</span>
+                <span className="text-right"><ConfidenceBadge value={s.confidence} /></span>
+                <span className="text-right text-gold">{formatPrice(s.entry)}</span>
+                <span className="text-right text-long">{formatPrice(s.take_profit_1)}</span>
+                <span className="text-right text-short">{formatPrice(s.stop_loss)}</span>
+                <StatusBadge status={s.status} />
+                <span className={cn(
+                  "text-right font-semibold",
+                  pnlN != null && pnlN > 0 ? "text-long" : pnlN != null && pnlN < 0 ? "text-short" : "text-text-muted"
+                )}>
+                  {pnlN != null ? `${pnlN > 0 ? "+" : ""}${pnlN.toFixed(2)}%` : "—"}
+                </span>
+                <span className="text-right text-text-muted">{formatTimeAgo(s.fired_at)}</span>
+              </div>
+            );
+          })
+        )}
+
+        {signals.length > 0 && (
+          <div className="px-3 py-2 border-t border-border text-2xs text-text-muted font-mono">
+            {signals.length} records · click column headers to sort
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }
