@@ -549,6 +549,10 @@ async def reset_password(
         raise AuthenticationError("Invalid or expired OTP.")
 
     user.password_hash = get_password_hash(payload.new_password)
+    # OTP was delivered to their email → email ownership proven → auto-verify
+    if not user.is_verified:
+        user.is_verified = True
+        logger.info(f"User {user.id} auto-verified via password reset OTP")
     await redis._r.delete(redis_key)
     await db.flush()
 
