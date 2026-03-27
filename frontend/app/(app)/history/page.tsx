@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Signal } from "@/types/signal";
 import { formatPrice, formatTimeAgo, getStatusLabel, getStatusColor } from "@/lib/formatters";
-import { History, TrendingUp, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { History, TrendingUp, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Clock } from "lucide-react";
 import Link from "next/link";
 
 type SortKey = "confidence" | "entry" | "take_profit_1" | "stop_loss" | "pnl_pct" | "fired_at";
@@ -74,7 +74,10 @@ export default function HistoryPage() {
   const total = signals.length;
   const wins = signals.filter((s) => s.status?.includes("tp")).length;
   const losses = signals.filter((s) => s.status === "sl_hit").length;
-  const winRate = wins + losses > 0 ? Math.round((wins / (wins + losses)) * 100) : 0;
+  const expired = signals.filter((s) => s.status === "expired" || s.status === "invalidated").length;
+  const closed = wins + losses;
+  const winRate = closed > 0 ? Math.round((wins / closed) * 100) : 0;
+  const winRateColor = winRate >= 65 ? "text-long" : winRate >= 50 ? "text-gold" : "text-short";
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -93,18 +96,30 @@ export default function HistoryPage() {
         <p className="text-text-muted text-sm mt-1">All past signals with outcomes</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      {/* Win/Loss Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="bg-surface border border-border rounded-xl p-4 text-center">
           <p className="text-2xl font-bold font-mono text-text-primary">{total}</p>
-          <p className="text-xs text-text-muted mt-1">Total Signals</p>
+          <p className="text-xs text-text-muted mt-1">Total</p>
         </div>
         <div className="bg-surface border border-long/20 rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold font-mono text-long">{winRate}%</p>
+          <p className={`text-2xl font-bold font-mono ${winRateColor}`}>{winRate}%</p>
           <p className="text-xs text-text-muted mt-1">Win Rate</p>
+          {closed > 0 && (
+            <p className="text-xs text-text-faint mt-0.5">{wins}W / {losses}L</p>
+          )}
+        </div>
+        <div className="bg-surface border border-long/20 rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold font-mono text-long">{wins}</p>
+          <p className="text-xs text-text-muted mt-1">TP Hits</p>
+        </div>
+        <div className="bg-surface border border-short/20 rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold font-mono text-short">{losses}</p>
+          <p className="text-xs text-text-muted mt-1">SL Hits</p>
         </div>
         <div className="bg-surface border border-border rounded-xl p-4 text-center">
-          <p className="text-2xl font-bold font-mono text-text-primary">{wins}</p>
-          <p className="text-xs text-text-muted mt-1">TP Hits</p>
+          <p className="text-2xl font-bold font-mono text-text-muted">{expired}</p>
+          <p className="text-xs text-text-muted mt-1">Expired</p>
         </div>
       </div>
 

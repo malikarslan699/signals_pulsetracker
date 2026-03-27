@@ -378,3 +378,165 @@ async def indicator_performance(
         r['win_rate'] = round(w / (w + l) * 100, 1) if (w + l) > 0 else None
 
     return {"performance": results, "days": days}
+
+
+@router.get("/failure-analysis", summary="Why are signals failing? Indicator-level breakdown of SL hits")
+async def failure_analysis(
+    days: int = Query(default=14, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_active_user),
+):
+    """
+    Deep dive into losing trades:
+    - Which pairs have the worst SL hit rate
+    - Which timeframes produce most losses
+    - Average time before SL hit
+    - R:R distribution for losses vs wins
+    - Confidence at time of loss (were we overconfident?)
+    - Direction bias in failures (more LONGs fail or SHORTs?)
+    """
+    import json
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # SL hit stats by pair
+    sl_by_pair = await db.execute(text("""
+        SELECT symbol, market, direction,
+            COUNT(*) as sl_count,
+            ROUND(AVG(confidence)::numeric, 1) as avg_confidence_at_loss,
+            ROUND(AVG(rr_ratio)::numeric, 2) as avg_rr,
+            ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - fired_at))/3600)::numeric, 1) as avg_hours_to_sl,
+            MIN(EXTRACT(EPOCH FROM (closed_at - fired_at))/60)::int as fastest_sl_min
+        FROM signals
+        WHERE fired_at >= :cutoff
+          AND status = 'sl_hit'
+          AND closed_at IS NOT NULL
+        GROUP BY symbol, market, direction
+        ORDER BY sl_count DESC
+        LIMIT 20
+    """), {"cutoff": cutoff})
+
+    # SL hit stats by timeframe
+    sl_by_tf = await db.execute(text("""
+        SELECT timeframe,
+            COUNT(*) FILTER (WHERE status = 'sl_hit') as sl_hits,
+            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as tp_hits,
+            ROUND(AVG(confidence) FILTER (WHERE status = 'sl_hit')::numeric, 1) as avg_conf_loss,
+            ROUND(AVG(confidence) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit'))::numeric, 1) as avg_conf_win,
+            ROUND(AVG(rr_ratio) FILTER (WHERE status = 'sl_hit')::numeric, 2) as avg_rr_loss,
+            ROUND(AVG(rr_ratio) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit'))::numeric, 2) as avg_rr_win
+        FROM signals
+        WHERE fired_at >= :cutoff AND status != 'active'
+        GROUP BY timeframe
+        ORDER BY sl_hits DESC
+    """), {"cutoff": cutoff})
+
+    # Overconfidence check: signals with high confidence that still hit SL
+    overconfident_losses = await db.execute(text("""
+        SELECT symbol, direction, timeframe, confidence, rr_ratio, pnl_pct,
+               fired_at, closed_at,
+               EXTRACT(EPOCH FROM (closed_at - fired_at))/3600 as hours_held
+        FROM signals
+        WHERE fired_at >= :cutoff
+          AND status = 'sl_hit'
+          AND confidence >= 85
+          AND closed_at IS NOT NULL
+        ORDER BY confidence DESC
+        LIMIT 20
+    """), {"cutoff": cutoff})
+
+    # Direction failure bias
+    dir_bias = await db.execute(text("""
+        SELECT direction,
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'sl_hit') as sl_hits,
+            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as tp_hits,
+            ROUND(AVG(confidence)::numeric, 1) as avg_confidence
+        FROM signals
+        WHERE fired_at >= :cutoff AND status NOT IN ('active','expired')
+        GROUP BY direction
+    """), {"cutoff": cutoff})
+
+    # Signals with score_breakdown — extract which indicators were present in losses
+    sl_signals_raw = await db.execute(text("""
+        SELECT score_breakdown
+        FROM signals
+        WHERE fired_at >= :cutoff
+          AND status = 'sl_hit'
+          AND score_breakdown IS NOT NULL
+        LIMIT 100
+    """), {"cutoff": cutoff})
+
+    tp_signals_raw = await db.execute(text("""
+        SELECT score_breakdown
+        FROM signals
+        WHERE fired_at >= :cutoff
+          AND status IN ('tp1_hit','tp2_hit','tp3_hit')
+          AND score_breakdown IS NOT NULL
+        LIMIT 100
+    """), {"cutoff": cutoff})
+
+    # Tally which indicator keys appeared in wins vs losses
+    sl_indicator_counts: dict = {}
+    tp_indicator_counts: dict = {}
+
+    def tally_indicators(rows, counter):
+        for row in rows.mappings():
+            sb = row["score_breakdown"] or {}
+            if isinstance(sb, str):
+                try: sb = json.loads(sb)
+                except: continue
+            for key, val in sb.items():
+                if isinstance(val, (int, float)) and val > 0:
+                    counter[key] = counter.get(key, 0) + 1
+
+    tally_indicators(sl_signals_raw, sl_indicator_counts)
+    tally_indicators(tp_signals_raw, tp_indicator_counts)
+
+    # Build indicator comparison: appears more in losses = potentially noisy
+    all_indicators = set(sl_indicator_counts) | set(tp_indicator_counts)
+    sl_total = sum(sl_indicator_counts.values()) or 1
+    tp_total = sum(tp_indicator_counts.values()) or 1
+
+    indicator_comparison = []
+    for ind in sorted(all_indicators):
+        sl_pct = round(sl_indicator_counts.get(ind, 0) / sl_total * 100, 1)
+        tp_pct = round(tp_indicator_counts.get(ind, 0) / tp_total * 100, 1)
+        noise_score = round(sl_pct - tp_pct, 1)  # positive = noisy (more in losses)
+        indicator_comparison.append({
+            "indicator": ind,
+            "in_losses_pct": sl_pct,
+            "in_wins_pct": tp_pct,
+            "noise_score": noise_score,
+            "assessment": "noisy" if noise_score > 5 else "reliable" if noise_score < -5 else "neutral",
+        })
+    indicator_comparison.sort(key=lambda x: x["noise_score"], reverse=True)
+
+    def serialize(rows):
+        result = []
+        for r in rows.mappings():
+            d = dict(r)
+            if d.get("fired_at"): d["fired_at"] = d["fired_at"].isoformat()
+            if d.get("closed_at"): d["closed_at"] = d["closed_at"].isoformat()
+            result.append(d)
+        return result
+
+    def with_wr(rows):
+        result = serialize(rows)
+        for r in result:
+            w = r.get("tp_hits", 0) or 0
+            l = r.get("sl_hits", 0) or 0
+            r["win_rate"] = round(w / (w + l) * 100, 1) if (w + l) > 0 else None
+        return result
+
+    return {
+        "days": days,
+        "sl_by_pair": serialize(sl_by_pair),
+        "sl_by_timeframe": with_wr(sl_by_tf),
+        "overconfident_losses": serialize(overconfident_losses),
+        "direction_bias": with_wr(dir_bias),
+        "indicator_noise_analysis": indicator_comparison,
+        "summary": {
+            "noisy_indicators": [x["indicator"] for x in indicator_comparison if x["assessment"] == "noisy"][:5],
+            "reliable_indicators": [x["indicator"] for x in indicator_comparison if x["assessment"] == "reliable"][:5],
+        },
+    }

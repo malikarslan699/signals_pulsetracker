@@ -198,7 +198,7 @@ export default function QALabPage() {
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterTf, setFilterTf] = useState("ALL");
   const [filterMarket, setFilterMarket] = useState("ALL");
-  const [activeTab, setActiveTab] = useState<"signals" | "stats" | "noisy">("signals");
+  const [activeTab, setActiveTab] = useState<"signals" | "stats" | "noisy" | "failures">("signals");
 
   const { data: logData, isLoading: logLoading } = useQuery({
     queryKey: ["qa-log", days, filterStatus, filterTf, filterMarket],
@@ -216,6 +216,12 @@ export default function QALabPage() {
   const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ["qa-stats", days],
     queryFn: () => api.get("/api/v1/admin/qa/stats", { params: { days } }).then((r) => r.data),
+  });
+
+  const { data: failureData, isLoading: failureLoading } = useQuery({
+    queryKey: ["qa-failures", days],
+    queryFn: () => api.get("/api/v1/admin/qa/failure-analysis", { params: { days } }).then((r) => r.data),
+    enabled: activeTab === "failures",
   });
 
   const signals: QASignal[] = logData?.signals || [];
@@ -249,10 +255,10 @@ export default function QALabPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border">
-        {(["signals", "stats", "noisy"] as const).map((tab) => (
+        {(["signals", "stats", "noisy", "failures"] as const).map((tab) => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors capitalize ${activeTab === tab ? "border-purple text-purple" : "border-transparent text-text-muted hover:text-text-primary"}`}>
-            {tab === "signals" ? "Signal Log" : tab === "stats" ? "QA Stats" : "Noisy Pairs"}
+            {tab === "signals" ? "Signal Log" : tab === "stats" ? "QA Stats" : tab === "noisy" ? "Noisy Pairs" : "Failure Analysis"}
           </button>
         ))}
       </div>
@@ -457,6 +463,178 @@ export default function QALabPage() {
                 </tbody>
               </table>
             </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* ── TAB: Failure Analysis ─────────────────────────────────────────── */}
+      {activeTab === "failures" && (
+        <div className="space-y-6">
+          {failureLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-24 bg-surface border border-border rounded-xl animate-pulse" />
+            ))}</div>
+          ) : failureData ? (
+            <>
+              {/* Summary banners */}
+              {failureData.summary?.noisy_indicators?.length > 0 && (
+                <div className="bg-short/5 border border-short/20 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-short mb-2 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" /> Noisy Indicators (appear more in losses than wins)
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {failureData.summary.noisy_indicators.map((ind: string) => (
+                      <span key={ind} className="text-xs px-2 py-0.5 bg-short/10 text-short rounded-full font-mono">{ind}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {failureData.summary?.reliable_indicators?.length > 0 && (
+                <div className="bg-long/5 border border-long/20 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-long mb-2 flex items-center gap-2">
+                    <Shield className="w-4 h-4" /> Reliable Indicators (appear more in wins)
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {failureData.summary.reliable_indicators.map((ind: string) => (
+                      <span key={ind} className="text-xs px-2 py-0.5 bg-long/10 text-long rounded-full font-mono">{ind}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Direction bias */}
+              <div className="grid grid-cols-2 gap-4">
+                {failureData.direction_bias?.map((row: any) => {
+                  const wr = row.win_rate;
+                  const isLong = row.direction === "LONG";
+                  return (
+                    <div key={row.direction} className={`bg-surface border ${isLong ? "border-long/20" : "border-short/20"} rounded-xl p-4`}>
+                      <p className={`text-sm font-bold ${isLong ? "text-long" : "text-short"} mb-2`}>
+                        {isLong ? "↑ LONG" : "↓ SHORT"} signals
+                      </p>
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div><p className="text-lg font-bold font-mono text-long">{row.tp_hits}</p><p className="text-xs text-text-muted">TP Hits</p></div>
+                        <div><p className="text-lg font-bold font-mono text-short">{row.sl_hits}</p><p className="text-xs text-text-muted">SL Hits</p></div>
+                        <div>
+                          <p className={`text-lg font-bold font-mono ${wr != null && wr >= 50 ? "text-long" : "text-short"}`}>{wr != null ? `${wr}%` : "—"}</p>
+                          <p className="text-xs text-text-muted">Win Rate</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* SL hits by timeframe */}
+              <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                    <TrendingDown className="w-4 h-4 text-short" /> SL Hits by Timeframe
+                  </p>
+                </div>
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                    <th className="px-4 py-2 text-left">TF</th>
+                    <th className="px-4 py-2 text-right">TP Hits</th>
+                    <th className="px-4 py-2 text-right">SL Hits</th>
+                    <th className="px-4 py-2 text-right">Win Rate</th>
+                    <th className="px-4 py-2 text-right">Avg Conf Win</th>
+                    <th className="px-4 py-2 text-right">Avg Conf Loss</th>
+                  </tr></thead>
+                  <tbody>
+                    {failureData.sl_by_timeframe?.map((row: any) => (
+                      <tr key={row.timeframe} className="border-b border-border hover:bg-surface-2">
+                        <td className="px-4 py-2 font-mono font-bold text-text-primary">{row.timeframe}</td>
+                        <td className="px-4 py-2 text-right text-long">{row.tp_hits ?? 0}</td>
+                        <td className="px-4 py-2 text-right text-short">{row.sl_hits ?? 0}</td>
+                        <td className="px-4 py-2 text-right font-mono">
+                          <span className={row.win_rate != null && row.win_rate >= 50 ? "text-long" : "text-short"}>
+                            {row.win_rate != null ? `${row.win_rate}%` : "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-text-muted">{row.avg_conf_win ?? "—"}</td>
+                        <td className="px-4 py-2 text-right font-mono text-text-muted">{row.avg_conf_loss ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Indicator noise analysis */}
+              <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                    <Search className="w-4 h-4 text-purple" /> Indicator Noise Analysis
+                  </p>
+                  <p className="text-xs text-text-muted mt-0.5">Noise score = % in losses − % in wins. Positive = found more in losing trades.</p>
+                </div>
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                    <th className="px-4 py-2 text-left">Indicator</th>
+                    <th className="px-4 py-2 text-right">In Losses %</th>
+                    <th className="px-4 py-2 text-right">In Wins %</th>
+                    <th className="px-4 py-2 text-right">Noise Score</th>
+                    <th className="px-4 py-2 text-right">Assessment</th>
+                  </tr></thead>
+                  <tbody>
+                    {failureData.indicator_noise_analysis?.map((row: any) => (
+                      <tr key={row.indicator} className="border-b border-border hover:bg-surface-2">
+                        <td className="px-4 py-2 font-mono text-text-primary text-xs">{row.indicator}</td>
+                        <td className="px-4 py-2 text-right font-mono text-short text-xs">{row.in_losses_pct}%</td>
+                        <td className="px-4 py-2 text-right font-mono text-long text-xs">{row.in_wins_pct}%</td>
+                        <td className={`px-4 py-2 text-right font-mono font-bold text-xs ${row.noise_score > 5 ? "text-short" : row.noise_score < -5 ? "text-long" : "text-text-muted"}`}>
+                          {row.noise_score > 0 ? "+" : ""}{row.noise_score}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            row.assessment === "noisy" ? "bg-short/10 text-short" :
+                            row.assessment === "reliable" ? "bg-long/10 text-long" :
+                            "bg-surface-2 text-text-muted"
+                          }`}>{row.assessment}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Overconfident losses */}
+              {failureData.overconfident_losses?.length > 0 && (
+                <div className="bg-surface border border-short/20 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                    <p className="text-sm font-semibold text-short flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" /> High-Confidence Losses (conf ≥85 but SL hit)
+                    </p>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                      <th className="px-4 py-2 text-left">Pair</th>
+                      <th className="px-4 py-2">Dir</th>
+                      <th className="px-4 py-2">TF</th>
+                      <th className="px-4 py-2 text-right">Conf</th>
+                      <th className="px-4 py-2 text-right">R:R</th>
+                      <th className="px-4 py-2 text-right">PnL</th>
+                      <th className="px-4 py-2 text-right">Held (hrs)</th>
+                    </tr></thead>
+                    <tbody>
+                      {failureData.overconfident_losses.map((row: any, i: number) => (
+                        <tr key={i} className="border-b border-border hover:bg-surface-2">
+                          <td className="px-4 py-2 font-mono font-bold text-text-primary">{row.symbol}</td>
+                          <td className="px-4 py-2 text-center">
+                            <span className={`text-xs font-bold ${row.direction === "LONG" ? "text-long" : "text-short"}`}>{row.direction}</span>
+                          </td>
+                          <td className="px-4 py-2 text-center text-text-muted text-xs">{row.timeframe}</td>
+                          <td className="px-4 py-2 text-right font-mono text-short">{row.confidence}</td>
+                          <td className="px-4 py-2 text-right font-mono text-text-secondary">{row.rr_ratio}R</td>
+                          <td className="px-4 py-2 text-right font-mono text-short">{row.pnl_pct != null ? `${Number(row.pnl_pct).toFixed(2)}%` : "—"}</td>
+                          <td className="px-4 py-2 text-right font-mono text-text-muted">{row.hours_held != null ? Number(row.hours_held).toFixed(1) : "—"}h</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           ) : null}
         </div>
       )}
