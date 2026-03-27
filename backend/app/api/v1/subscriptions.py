@@ -493,3 +493,120 @@ async def my_subscription(
             "stripe_subscription_id": subscription.stripe_subscription_id,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /crypto-payment — User submits crypto TxID, owner gets email alert
+# ---------------------------------------------------------------------------
+class CryptoPaymentRequest(BaseModel):
+    plan: str       # monthly | yearly | lifetime
+    txid: str       # Transaction ID / hash
+    network: str    # BTC | ETH | USDT-TRC20 | USDT-ERC20 | BNB
+    amount_usd: float
+
+
+@router.post("/crypto-payment", summary="Submit crypto payment TxID for manual verification")
+async def submit_crypto_payment(
+    payload: CryptoPaymentRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    redis: RedisClient = Depends(get_redis_client),
+) -> dict:
+    """
+    User submits their crypto transaction ID after paying.
+    System stores it as pending and emails owner for manual confirmation.
+    Owner then upgrades user plan via admin panel.
+    """
+    if payload.plan not in ("monthly", "yearly", "lifetime"):
+        raise ValidationError("Invalid plan. Must be monthly, yearly, or lifetime.")
+
+    if not payload.txid or len(payload.txid) < 10:
+        raise ValidationError("Invalid transaction ID.")
+
+    price_map = {"monthly": 29, "yearly": 199, "lifetime": 299}
+    expected_price = price_map[payload.plan]
+
+    # Store pending request in Redis (expires in 7 days)
+    import json
+    from datetime import datetime, timezone
+    request_data = {
+        "user_id": str(current_user.id),
+        "user_email": current_user.email,
+        "username": current_user.username,
+        "plan": payload.plan,
+        "txid": payload.txid,
+        "network": payload.network,
+        "amount_usd": payload.amount_usd,
+        "expected_usd": expected_price,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "status": "pending",
+    }
+    redis_key = f"crypto:payment:{current_user.id}:{payload.plan}"
+    await redis.client.set(redis_key, json.dumps(request_data), ex=604800)  # 7 days
+
+    # Add to pending list
+    await redis.client.lpush("crypto:payments:pending", redis_key)
+
+    # Send email notification to owner
+    try:
+        from app.services.mailer import send_email, smtp_is_configured
+        config_svc = settings
+        # Load SMTP from system config stored in Redis/DB
+        import os
+        smtp_host = os.getenv("SMTP_HOST", "")
+        smtp_from = os.getenv("SMTP_FROM_EMAIL", "")
+        if smtp_host and smtp_from:
+            from app.services.system_config_service import SMTPConfig
+            smtp = SMTPConfig(
+                enabled=True,
+                host=smtp_host,
+                port=int(os.getenv("SMTP_PORT", "465")),
+                username=os.getenv("SMTP_USERNAME", ""),
+                password=os.getenv("SMTP_PASSWORD", ""),
+                from_email=smtp_from,
+                from_name=os.getenv("SMTP_FROM_NAME", "PulseSignal Pro"),
+                use_tls=os.getenv("SMTP_USE_TLS", "false").lower() == "true",
+                use_ssl=os.getenv("SMTP_USE_SSL", "true").lower() == "true",
+            )
+            subject = f"[PulseSignal] Crypto Payment — {current_user.email} → {payload.plan}"
+            body = (
+                f"A new crypto payment requires verification.\n\n"
+                f"User: {current_user.username} ({current_user.email})\n"
+                f"Plan: {payload.plan.upper()} (${expected_price} USD)\n"
+                f"Network: {payload.network}\n"
+                f"TxID: {payload.txid}\n"
+                f"Amount claimed: ${payload.amount_usd}\n"
+                f"Submitted: {request_data['submitted_at']}\n\n"
+                f"ACTION: Verify on blockchain explorer, then go to Admin → Users → set plan to {payload.plan}."
+            )
+            await send_email(smtp, to_email=smtp_from, subject=subject, body=body)
+    except Exception as e:
+        logger.warning(f"Could not send owner email for crypto payment: {e}")
+
+    logger.info(
+        f"Crypto payment submitted: user={current_user.id} plan={payload.plan} "
+        f"txid={payload.txid} network={payload.network}"
+    )
+
+    return {
+        "status": "pending",
+        "message": "Payment submitted. Our team will verify your transaction within 24 hours and activate your plan.",
+        "plan": payload.plan,
+        "txid": payload.txid,
+        "network": payload.network,
+    }
+
+
+@router.get("/crypto-payment/my-pending", summary="Check user's pending crypto payment")
+async def get_my_crypto_payment(
+    current_user: User = Depends(get_current_active_user),
+    redis: RedisClient = Depends(get_redis_client),
+) -> dict:
+    import json
+    for plan in ("monthly", "yearly", "lifetime"):
+        redis_key = f"crypto:payment:{current_user.id}:{plan}"
+        raw = await redis.client.get(redis_key)
+        if raw:
+            data = json.loads(raw)
+            return {"has_pending": True, "payment": data}
+    return {"has_pending": False, "payment": None}

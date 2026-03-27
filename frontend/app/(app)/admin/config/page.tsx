@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Save, RefreshCw, ShieldAlert } from "lucide-react";
+import { Save, RefreshCw, ShieldAlert, Eye, EyeOff } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { api } from "@/lib/api";
@@ -177,6 +177,48 @@ function Input({
         placeholder={placeholder}
         className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple disabled:opacity-60"
       />
+    </label>
+  );
+}
+
+function SecretInput({
+  label,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  hint?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <label className="block">
+      <span className="block text-xs text-text-muted mb-1.5">{label}</span>
+      <div className="relative">
+        <input
+          type={show ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          placeholder={placeholder}
+          className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 pr-9 text-sm text-text-primary focus:outline-none focus:border-purple disabled:opacity-60"
+        />
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          disabled={disabled}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary disabled:opacity-40"
+        >
+          {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+      {hint && <p className="text-xs text-text-faint mt-1">{hint}</p>}
     </label>
   );
 }
@@ -460,8 +502,15 @@ export default function AdminConfigPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Input label="Host" value={form.smtp.host} onChange={(v) => setSmtp("host", v)} disabled={!isOwner} />
           <Input label="Port" type="number" value={form.smtp.port} onChange={(v) => setSmtp("port", Number(v))} disabled={!isOwner} />
-          <Input label="Username" value={form.smtp.username} onChange={(v) => setSmtp("username", v)} disabled={!isOwner} />
-          <Input label="Password" type="password" value={form.smtp.password} onChange={(v) => setSmtp("password", v)} disabled={!isOwner} />
+          <Input label="Username (Email Address)" value={form.smtp.username} onChange={(v) => setSmtp("username", v)} disabled={!isOwner} placeholder="signals@yourdomain.com" />
+          <SecretInput
+            label="Password (Mailbox Password)"
+            value={form.smtp.password}
+            onChange={(v) => setSmtp("password", v)}
+            disabled={!isOwner}
+            placeholder="Your mailbox password"
+            hint="Hostinger: use the password you set when creating the mailbox in hPanel"
+          />
           <Input label="From Email" value={form.smtp.from_email} onChange={(v) => setSmtp("from_email", v)} disabled={!isOwner} />
           <Input label="From Name" value={form.smtp.from_name} onChange={(v) => setSmtp("from_name", v)} disabled={!isOwner} />
         </div>
@@ -516,7 +565,7 @@ export default function AdminConfigPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Input label="Telegram Bot Token" value={form.integrations.telegram_bot_token} onChange={(v) => setIntegration("telegram_bot_token", v)} disabled={!isOwner} />
+          <SecretInput label="Telegram Bot Token" value={form.integrations.telegram_bot_token} onChange={(v) => setIntegration("telegram_bot_token", v)} disabled={!isOwner} hint="From @BotFather — starts with numbers:ABC..." />
           <Input label="Telegram VIP Channel ID" value={form.integrations.telegram_vip_channel_id} onChange={(v) => setIntegration("telegram_vip_channel_id", v)} disabled={!isOwner} />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-border">
@@ -548,14 +597,22 @@ export default function AdminConfigPage() {
       </Section>
 
       <Section title="API Keys & Billing (Owner)">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Input label="Binance API Key" value={form.integrations.binance_api_key} onChange={(v) => setIntegration("binance_api_key", v)} disabled={!isOwner} />
-          <Input label="Binance API Secret" value={form.integrations.binance_api_secret} onChange={(v) => setIntegration("binance_api_secret", v)} disabled={!isOwner} />
-          <Input label="TwelveData API Key" value={form.integrations.twelvedata_api_key} onChange={(v) => setIntegration("twelvedata_api_key", v)} disabled={!isOwner} />
-          <Input label="Stripe Secret Key" value={form.integrations.stripe_secret_key} onChange={(v) => setIntegration("stripe_secret_key", v)} disabled={!isOwner} />
-          <Input label="Stripe Webhook Secret" value={form.integrations.stripe_webhook_secret} onChange={(v) => setIntegration("stripe_webhook_secret", v)} disabled={!isOwner} />
-          <Input label="Stripe Monthly Price ID" value={form.integrations.stripe_monthly_price_id} onChange={(v) => setIntegration("stripe_monthly_price_id", v)} disabled={!isOwner} />
-          <Input label="Stripe Lifetime Price ID" value={form.integrations.stripe_lifetime_price_id} onChange={(v) => setIntegration("stripe_lifetime_price_id", v)} disabled={!isOwner} />
+        <div className="space-y-2 text-xs text-text-muted bg-surface-2 rounded-lg p-3 border border-border">
+          <p className="font-medium text-text-secondary">What each key does:</p>
+          <p><span className="text-blue font-mono">Binance API</span> — Fetches live crypto prices &amp; candles for the scanner</p>
+          <p><span className="text-blue font-mono">TwelveData API</span> — Fetches Forex (EUR/USD etc.) data for scanner</p>
+          <p><span className="text-blue font-mono">Stripe Secret Key</span> — Processes card payments automatically (instant access on payment)</p>
+          <p><span className="text-blue font-mono">Stripe Webhook Secret</span> — Verifies payment events from Stripe are genuine</p>
+          <p><span className="text-blue font-mono">Stripe Price IDs</span> — Product price IDs from your Stripe dashboard (Products → Prices)</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+          <SecretInput label="Binance API Key" value={form.integrations.binance_api_key} onChange={(v) => setIntegration("binance_api_key", v)} disabled={!isOwner} />
+          <SecretInput label="Binance API Secret" value={form.integrations.binance_api_secret} onChange={(v) => setIntegration("binance_api_secret", v)} disabled={!isOwner} />
+          <SecretInput label="TwelveData API Key" value={form.integrations.twelvedata_api_key} onChange={(v) => setIntegration("twelvedata_api_key", v)} disabled={!isOwner} hint="Get free key at twelvedata.com — 800 req/day free" />
+          <SecretInput label="Stripe Secret Key" value={form.integrations.stripe_secret_key} onChange={(v) => setIntegration("stripe_secret_key", v)} disabled={!isOwner} hint="Stripe Dashboard → Developers → API Keys → Secret key" />
+          <SecretInput label="Stripe Webhook Secret" value={form.integrations.stripe_webhook_secret} onChange={(v) => setIntegration("stripe_webhook_secret", v)} disabled={!isOwner} hint="Stripe → Webhooks → your endpoint → Signing secret" />
+          <Input label="Stripe Monthly Price ID" value={form.integrations.stripe_monthly_price_id} onChange={(v) => setIntegration("stripe_monthly_price_id", v)} disabled={!isOwner} placeholder="price_xxx" />
+          <Input label="Stripe Lifetime Price ID" value={form.integrations.stripe_lifetime_price_id} onChange={(v) => setIntegration("stripe_lifetime_price_id", v)} disabled={!isOwner} placeholder="price_xxx" />
         </div>
       </Section>
 
