@@ -16,9 +16,7 @@ export default function ForgotPasswordPage() {
     onSuccess: () => {
       setSent(true);
     },
-    onError: (e: any) => {
-      toast.error(e?.response?.data?.detail || "Something went wrong. Please try again.");
-    },
+    onError: () => {},
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -70,6 +68,13 @@ export default function ForgotPasswordPage() {
         </p>
       </div>
 
+      {mutation.isError && (
+        <div className="flex items-center gap-2 bg-short/10 border border-short/20 rounded-lg px-4 py-3 mb-1 text-sm text-short">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          {(mutation.error as any)?.response?.data?.detail || "Something went wrong. Please try again."}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label
@@ -84,9 +89,9 @@ export default function ForgotPasswordPage() {
             autoComplete="email"
             required
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => { setEmail(e.target.value); mutation.reset(); }}
             placeholder="you@example.com"
-            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple transition-colors"
+            className={`w-full px-4 py-2.5 bg-surface-2 border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple transition-colors ${mutation.isError ? "border-short" : "border-border"}`}
           />
         </div>
 

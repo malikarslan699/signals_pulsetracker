@@ -495,33 +495,33 @@ async def forgot_password(
     result = await db.execute(select(User).where(User.email == payload.email))
     user: Optional[User] = result.scalar_one_or_none()
 
-    if user:
-        otp = str(secrets.randbelow(900000) + 100000)  # 6-digit
-        redis_key = f"auth:password_reset:{payload.email}"
-        await redis._r.set(redis_key, otp, ex=600)  # 10 minutes
+    if not user:
+        raise NotFoundError("No account found with this email address. Please check and try again.")
 
-        # Send OTP via SMTP
-        try:
-            smtp_cfg = await load_system_config(redis)
-            subject = "PulseSignal Pro — Password Reset OTP"
-            text_body = (
-                f"Your password reset code is: {otp}\n\n"
-                f"This code expires in 10 minutes.\n"
-                f"If you did not request a password reset, ignore this email."
-            )
-            html_body = (
-                f"<p>Your password reset code is:</p>"
-                f"<h2 style='letter-spacing:4px;font-size:32px'>{otp}</h2>"
-                f"<p>This code expires in <b>10 minutes</b>.</p>"
-                f"<p style='color:#888'>If you did not request a password reset, ignore this email.</p>"
-            )
-            await send_email(smtp_cfg.smtp, payload.email, subject, text_body, html_body)
-            logger.info(f"Password reset OTP sent to {payload.email}")
-        except Exception as e:
-            logger.warning(f"Could not send reset OTP to {payload.email}: {e}")
+    otp = str(secrets.randbelow(900000) + 100000)  # 6-digit
+    redis_key = f"auth:password_reset:{payload.email}"
+    await redis._r.set(redis_key, otp, ex=600)  # 10 minutes
 
-    # Always return same message — don't reveal if email exists
-    return {"message": "If that email is registered, an OTP has been sent."}
+    try:
+        smtp_cfg = await load_system_config(redis)
+        subject = "PulseSignal Pro — Password Reset OTP"
+        text_body = (
+            f"Your password reset code is: {otp}\n\n"
+            f"This code expires in 10 minutes.\n"
+            f"If you did not request a password reset, ignore this email."
+        )
+        html_body = (
+            f"<p>Your password reset code is:</p>"
+            f"<h2 style='letter-spacing:4px;font-size:32px'>{otp}</h2>"
+            f"<p>This code expires in <b>10 minutes</b>.</p>"
+            f"<p style='color:#888'>If you did not request a password reset, ignore this email.</p>"
+        )
+        await send_email(smtp_cfg.smtp, payload.email, subject, text_body, html_body)
+        logger.info(f"Password reset OTP sent to {payload.email}")
+    except Exception as e:
+        logger.warning(f"Could not send reset OTP to {payload.email}: {e}")
+
+    return {"message": "OTP has been sent to your email. It expires in 10 minutes."}
 
 
 @router.post("/reset-password", summary="Reset password using OTP")
