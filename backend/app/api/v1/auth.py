@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, EmailStr
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -467,3 +468,89 @@ async def connect_telegram(
         ),
         "bot_url": "https://t.me/PulseSignalProBot",
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /forgot-password — send OTP to email if it exists in DB
+# ---------------------------------------------------------------------------
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
+
+
+@router.post("/forgot-password", summary="Request a password reset OTP")
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: RedisClient = Depends(get_redis_client),
+) -> dict:
+    """
+    If the email exists in the database, send a 6-digit OTP to it.
+    Always returns the same response to avoid leaking whether the email exists.
+    """
+    result = await db.execute(select(User).where(User.email == payload.email))
+    user: Optional[User] = result.scalar_one_or_none()
+
+    if user:
+        otp = str(secrets.randbelow(900000) + 100000)  # 6-digit
+        redis_key = f"auth:password_reset:{payload.email}"
+        await redis._r.set(redis_key, otp, ex=600)  # 10 minutes
+
+        # Send OTP via SMTP
+        try:
+            smtp_cfg = await load_system_config(redis)
+            subject = "PulseSignal Pro — Password Reset OTP"
+            text_body = (
+                f"Your password reset code is: {otp}\n\n"
+                f"This code expires in 10 minutes.\n"
+                f"If you did not request a password reset, ignore this email."
+            )
+            html_body = (
+                f"<p>Your password reset code is:</p>"
+                f"<h2 style='letter-spacing:4px;font-size:32px'>{otp}</h2>"
+                f"<p>This code expires in <b>10 minutes</b>.</p>"
+                f"<p style='color:#888'>If you did not request a password reset, ignore this email.</p>"
+            )
+            await send_email(smtp_cfg.smtp, payload.email, subject, text_body, html_body)
+            logger.info(f"Password reset OTP sent to {payload.email}")
+        except Exception as e:
+            logger.warning(f"Could not send reset OTP to {payload.email}: {e}")
+
+    # Always return same message — don't reveal if email exists
+    return {"message": "If that email is registered, an OTP has been sent."}
+
+
+@router.post("/reset-password", summary="Reset password using OTP")
+async def reset_password(
+    payload: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: RedisClient = Depends(get_redis_client),
+) -> dict:
+    """
+    Validate the OTP and update the user's password.
+    """
+    if len(payload.new_password) < 8:
+        raise ValidationError("Password must be at least 8 characters.")
+
+    redis_key = f"auth:password_reset:{payload.email}"
+    stored_otp = await redis._r.get(redis_key)
+
+    if not stored_otp or stored_otp != payload.otp:
+        raise AuthenticationError("Invalid or expired OTP.")
+
+    result = await db.execute(select(User).where(User.email == payload.email))
+    user: Optional[User] = result.scalar_one_or_none()
+
+    if not user:
+        raise AuthenticationError("Invalid or expired OTP.")
+
+    user.password_hash = get_password_hash(payload.new_password)
+    await redis._r.delete(redis_key)
+    await db.flush()
+
+    logger.info(f"Password reset successful for user {user.id}")
+    return {"message": "Password has been reset successfully. You can now sign in."}

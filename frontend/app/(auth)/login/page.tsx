@@ -147,6 +147,16 @@ export default function LoginPage() {
           </div>
         </div>
 
+        {/* Forgot password */}
+        <div className="flex justify-end -mt-1">
+          <Link
+            href="/forgot-password"
+            className="text-xs text-text-muted hover:text-purple transition-colors"
+          >
+            Forgot password?
+          </Link>
+        </div>
+
         {/* Submit */}
         <button
           type="submit"
