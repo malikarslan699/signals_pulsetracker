@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  # Do not expose infra ports on host; app containers use internal network.
+  postgres:
+    ports: []
+
+  redis:
+    ports: []
+
+  # Expose app on non-conflicting host ports for shared server deployments.
+  backend:
+    ports:
+      - "8100:8000"
+
+  frontend:
+    ports:
+      - "3100:3000"

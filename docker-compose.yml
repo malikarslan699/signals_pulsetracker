@@ -1,0 +1,202 @@
+services:
+  # ─── Database ───────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: pulsesignal_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pulsesignal
+      POSTGRES_USER: pulsesignal
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulsesignal_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsesignal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pulsesignal_net
+
+  # ─── Redis ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: pulsesignal_redis
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - >
+        redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru &
+        pid=$$!;
+        for i in $$(seq 1 20); do redis-cli ping >/dev/null 2>&1 && break; sleep 0.5; done;
+        redis-cli REPLICAOF NO ONE >/dev/null 2>&1 || true;
+        wait $$pid
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pulsesignal_net
+
+  # ─── Backend API ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pulsesignal_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pulsesignal:${POSTGRES_PASSWORD:-pulsesignal_secret}@postgres:5432/pulsesignal
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - SECRET_KEY=${SECRET_KEY}
+      - FRONTEND_URL=https://signals.pulsetracker.net
+      - BACKEND_URL=https://signals.pulsetracker.net
+    ports:
+      - "8100:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - pulsesignal_net
+    volumes:
+      - ./backend:/app:ro
+
+  # ─── Celery Worker ───────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: pulsesignal_worker
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pulsesignal:${POSTGRES_PASSWORD:-pulsesignal_secret}@postgres:5432/pulsesignal
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - pulsesignal_net
+    command: celery -A workers.celery_app worker --loglevel=info --concurrency=4 -Q scanner,alerts,default
+
+  # ─── Telegram Bot ────────────────────────────────────────
+  telegram_bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pulsesignal_telegram_bot
+    restart: on-failure:5
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pulsesignal:${POSTGRES_PASSWORD:-pulsesignal_secret}@postgres:5432/pulsesignal
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python telegram_bot.py
+    healthcheck:
+      disable: true
+    networks:
+      - pulsesignal_net
+
+  # ─── Celery Beat (Scheduler) ─────────────────────────────
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: pulsesignal_scheduler
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pulsesignal:${POSTGRES_PASSWORD:-pulsesignal_secret}@postgres:5432/pulsesignal
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - pulsesignal_net
+    command: celery -A workers.celery_app beat --loglevel=info --scheduler celery.beat.PersistentScheduler --schedule /tmp/celerybeat-schedule
+    healthcheck:
+      disable: true
+
+  # ─── Frontend ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=https://signals.pulsetracker.net
+        - NEXT_PUBLIC_WS_URL=wss://signals.pulsetracker.net
+    container_name: pulsesignal_frontend
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=https://signals.pulsetracker.net
+      - NEXT_PUBLIC_WS_URL=wss://signals.pulsetracker.net
+      - BACKEND_URL=http://backend:8000
+    ports:
+      - "3100:3000"
+    depends_on:
+      - backend
+    networks:
+      - pulsesignal_net
+
+  # ─── Nginx ────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: pulsesignal_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - certbot_data:/var/www/certbot:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - pulsesignal_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  certbot_data:
+
+networks:
+  pulsesignal_net:
+    driver: bridge

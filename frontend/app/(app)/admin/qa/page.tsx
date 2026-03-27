@@ -1,0 +1,465 @@
+"use client";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { formatTimeAgo, getStatusColor, getStatusLabel } from "@/lib/formatters";
+import {
+  FlaskConical, TrendingUp, TrendingDown, CheckCircle2, XCircle,
+  AlertTriangle, BarChart3, Search, ChevronDown, ChevronRight,
+  Shield, Zap, Activity
+} from "lucide-react";
+import Link from "next/link";
+
+// ── Types ─────────────────────────────────────────────────────────────────
+interface QASignal {
+  id: string;
+  symbol: string;
+  market: string;
+  direction: string;
+  timeframe: string;
+  confidence: number;
+  status: string;
+  pnl_pct: number | null;
+  fired_at: string;
+  entry: number;
+  stop_loss: number;
+  take_profit_1: number;
+  rr_ratio: number;
+  qa: {
+    why_generated: string;
+    confirmations_present: string[];
+    confirmations_missing: string[];
+    triggered_indicators: string[];
+    aligned_tfs: string[];
+    conflicting_tfs: string[];
+    tf_5m_confirmed: boolean;
+    tf_15m_confirmed: boolean;
+    tf_1h_confirmed: boolean;
+    tf_4h_confirmed: boolean;
+    category_scores: Record<string, { score: number; max: number; pct: number; triggered: number; total: number }>;
+    strength_assessment: string;
+    risk_assessment: string;
+    outcome_summary: string;
+    confirmation_count: number;
+    missing_count: number;
+  };
+}
+
+interface QAStats {
+  days: number;
+  overall: {
+    total: number; wins: number; losses: number; expired: number;
+    active: number; avg_confidence: number; avg_rr: number; win_rate: number | null;
+  };
+  by_timeframe: Array<{ timeframe: string; total: number; wins: number; losses: number; avg_confidence: number; win_rate: number | null }>;
+  by_market: Array<{ market: string; total: number; wins: number; losses: number; win_rate: number | null }>;
+  by_direction: Array<{ direction: string; total: number; wins: number; losses: number; avg_pnl: number; win_rate: number | null }>;
+  noisy_pairs: Array<{ symbol: string; signal_count: number; avg_confidence: number; wins: number; losses: number; win_rate: number | null }>;
+  confidence_bands: Array<{ band: string; count: number; wins: number; losses: number; win_rate: number | null }>;
+}
+
+// ── Signal Row ─────────────────────────────────────────────────────────────
+function SignalQARow({ signal }: { signal: QASignal }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = signal.direction === "LONG";
+  const qa = signal.qa;
+
+  const statusColors: Record<string, string> = {
+    active: "text-blue-400", tp1_hit: "text-emerald-400", tp2_hit: "text-emerald-500",
+    tp3_hit: "text-emerald-600", sl_hit: "text-red-400", expired: "text-gray-400",
+  };
+
+  const tfBadge = (label: string, ok: boolean) => (
+    <span key={label} className={`text-xs px-1.5 py-0.5 rounded font-mono ${ok ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/10 text-red-400/60"}`}>
+      {label} {ok ? "✓" : "✗"}
+    </span>
+  );
+
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3 bg-surface hover:bg-surface-2 transition-colors text-left"
+      >
+        <div className="flex-shrink-0">
+          {expanded ? <ChevronDown className="w-4 h-4 text-text-muted" /> : <ChevronRight className="w-4 h-4 text-text-muted" />}
+        </div>
+        <span className="font-mono font-bold text-text-primary w-24">{signal.symbol}</span>
+        <span className={`text-xs font-bold w-12 ${isLong ? "text-long" : "text-short"}`}>
+          {isLong ? "↑ LONG" : "↓ SHORT"}
+        </span>
+        <span className="text-xs bg-surface-2 px-2 py-0.5 rounded text-text-muted w-10">{signal.timeframe}</span>
+        <span className="font-mono text-sm text-text-primary w-8">{signal.confidence}</span>
+        <span className={`text-xs w-20 ${statusColors[signal.status] || "text-text-muted"}`}>
+          {getStatusLabel(signal.status)}
+        </span>
+        <span className={`text-xs font-mono w-16 ${signal.pnl_pct != null && signal.pnl_pct > 0 ? "text-long" : signal.pnl_pct != null && signal.pnl_pct < 0 ? "text-short" : "text-text-muted"}`}>
+          {signal.pnl_pct != null ? `${signal.pnl_pct > 0 ? "+" : ""}${signal.pnl_pct.toFixed(2)}%` : "—"}
+        </span>
+        <div className="flex gap-1 ml-2">
+          {tfBadge("5m", qa.tf_5m_confirmed)}
+          {tfBadge("15m", qa.tf_15m_confirmed)}
+          {tfBadge("1H", qa.tf_1h_confirmed)}
+          {tfBadge("4H", qa.tf_4h_confirmed)}
+        </div>
+        <span className="text-xs text-text-muted ml-auto">{formatTimeAgo(signal.fired_at)}</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-border bg-surface-2/50 px-4 py-4 space-y-4">
+          {/* Why Generated */}
+          <div className="bg-surface border border-border rounded-lg px-4 py-3">
+            <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-1">Why Generated</p>
+            <p className="text-sm text-text-secondary">{qa.why_generated}</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Confirmations */}
+            <div>
+              <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">Confirmations ({qa.confirmation_count}/{qa.confirmation_count + qa.missing_count})</p>
+              <div className="space-y-1">
+                {qa.confirmations_present.map((c) => (
+                  <div key={c} className="flex items-center gap-2 text-xs text-emerald-400">
+                    <CheckCircle2 className="w-3 h-3 flex-shrink-0" />{c}
+                  </div>
+                ))}
+                {qa.confirmations_missing.map((c) => (
+                  <div key={c} className="flex items-center gap-2 text-xs text-text-faint">
+                    <XCircle className="w-3 h-3 flex-shrink-0" />{c}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Category Scores */}
+            <div>
+              <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">Category Scores</p>
+              <div className="space-y-1.5">
+                {Object.entries(qa.category_scores).map(([cat, data]) => (
+                  <div key={cat}>
+                    <div className="flex justify-between text-xs mb-0.5">
+                      <span className="text-text-secondary">{cat}</span>
+                      <span className={`font-mono ${data.pct >= 50 ? "text-emerald-400" : "text-text-muted"}`}>{data.pct}%</span>
+                    </div>
+                    <div className="h-1 bg-surface rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${data.pct >= 70 ? "bg-emerald-500" : data.pct >= 50 ? "bg-yellow-500" : "bg-red-500/50"}`}
+                        style={{ width: `${data.pct}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Assessment row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-surface border border-border rounded-lg px-3 py-2">
+              <p className="text-xs text-text-muted mb-1">Strength</p>
+              <p className="text-xs text-text-secondary">{qa.strength_assessment}</p>
+            </div>
+            <div className="bg-surface border border-border rounded-lg px-3 py-2">
+              <p className="text-xs text-text-muted mb-1">Risk</p>
+              <p className="text-xs text-text-secondary">{qa.risk_assessment}</p>
+            </div>
+            <div className="bg-surface border border-border rounded-lg px-3 py-2">
+              <p className="text-xs text-text-muted mb-1">Outcome</p>
+              <p className="text-xs text-text-secondary">{qa.outcome_summary}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <Link href={`/signal/${signal.id}`}
+              className="text-xs px-3 py-1.5 bg-purple/10 border border-purple/30 text-purple rounded-lg hover:bg-purple/20 transition-colors">
+              View Signal Detail →
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Stats Card ─────────────────────────────────────────────────────────────
+function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+  return (
+    <div className="bg-surface border border-border rounded-xl p-4">
+      <p className="text-xs text-text-muted mb-1">{label}</p>
+      <p className={`text-2xl font-bold font-mono ${color || "text-text-primary"}`}>{value}</p>
+      {sub && <p className="text-xs text-text-muted mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────
+export default function QALabPage() {
+  const [days, setDays] = useState(7);
+  const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterTf, setFilterTf] = useState("ALL");
+  const [filterMarket, setFilterMarket] = useState("ALL");
+  const [activeTab, setActiveTab] = useState<"signals" | "stats" | "noisy">("signals");
+
+  const { data: logData, isLoading: logLoading } = useQuery({
+    queryKey: ["qa-log", days, filterStatus, filterTf, filterMarket],
+    queryFn: () => api.get("/api/v1/admin/qa/signal-log", {
+      params: {
+        days,
+        limit: 100,
+        ...(filterStatus !== "ALL" && { status: filterStatus }),
+        ...(filterTf !== "ALL" && { timeframe: filterTf }),
+        ...(filterMarket !== "ALL" && { market: filterMarket }),
+      }
+    }).then((r) => r.data),
+  });
+
+  const { data: statsData, isLoading: statsLoading } = useQuery({
+    queryKey: ["qa-stats", days],
+    queryFn: () => api.get("/api/v1/admin/qa/stats", { params: { days } }).then((r) => r.data),
+  });
+
+  const signals: QASignal[] = logData?.signals || [];
+  const stats: QAStats | null = statsData || null;
+
+  const winRate = (wins: number, losses: number) =>
+    wins + losses > 0 ? `${Math.round((wins / (wins + losses)) * 100)}%` : "—";
+
+  return (
+    <div className="space-y-6 pb-20 lg:pb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-purple/10 border border-purple/20 rounded-lg">
+            <FlaskConical className="w-5 h-5 text-purple" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-text-primary">QA Lab</h2>
+            <p className="text-sm text-text-muted">Internal signal research & quality testing</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {[3, 7, 14, 30].map((d) => (
+            <button key={d} onClick={() => setDays(d)}
+              className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${days === d ? "bg-purple text-white border-purple" : "bg-surface border-border text-text-muted hover:text-text-primary"}`}>
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-border">
+        {(["signals", "stats", "noisy"] as const).map((tab) => (
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors capitalize ${activeTab === tab ? "border-purple text-purple" : "border-transparent text-text-muted hover:text-text-primary"}`}>
+            {tab === "signals" ? "Signal Log" : tab === "stats" ? "QA Stats" : "Noisy Pairs"}
+          </button>
+        ))}
+      </div>
+
+      {/* ── TAB: Signal Log ───────────────────────────────────────────────── */}
+      {activeTab === "signals" && (
+        <div className="space-y-4">
+          {/* Filters */}
+          <div className="flex flex-wrap gap-2">
+            {["ALL", "active", "tp1_hit", "tp2_hit", "sl_hit", "expired"].map((s) => (
+              <button key={s} onClick={() => setFilterStatus(s)}
+                className={`px-3 py-1 text-xs rounded-lg border transition-all ${filterStatus === s ? "bg-purple text-white border-purple" : "bg-surface border-border text-text-muted"}`}>
+                {s === "ALL" ? "All Status" : getStatusLabel(s)}
+              </button>
+            ))}
+            <div className="ml-auto flex gap-2">
+              {["ALL", "5m", "15m", "1H", "4H"].map((tf) => (
+                <button key={tf} onClick={() => setFilterTf(tf)}
+                  className={`px-2.5 py-1 text-xs rounded border transition-all ${filterTf === tf ? "bg-blue text-white border-blue" : "bg-surface border-border text-text-muted"}`}>
+                  {tf}
+                </button>
+              ))}
+              {["ALL", "crypto", "forex"].map((m) => (
+                <button key={m} onClick={() => setFilterMarket(m)}
+                  className={`px-2.5 py-1 text-xs rounded border transition-all capitalize ${filterMarket === m ? "bg-surface-2 text-text-primary border-purple" : "bg-surface border-border text-text-muted"}`}>
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Column headers */}
+          <div className="flex items-center gap-3 px-4 py-2 text-xs text-text-faint font-medium">
+            <span className="w-5" />
+            <span className="w-24">Pair</span>
+            <span className="w-12">Dir</span>
+            <span className="w-10">TF</span>
+            <span className="w-8">Conf</span>
+            <span className="w-20">Status</span>
+            <span className="w-16">PnL</span>
+            <span>TF Alignment</span>
+            <span className="ml-auto">Time</span>
+          </div>
+
+          {logLoading ? (
+            <div className="space-y-2">{Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-12 bg-surface border border-border rounded-lg animate-pulse" />
+            ))}</div>
+          ) : signals.length === 0 ? (
+            <div className="flex flex-col items-center py-16 text-text-muted">
+              <FlaskConical className="w-10 h-10 mb-3 opacity-30" />
+              <p>No signals found for selected filters</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {signals.map((sig) => <SignalQARow key={sig.id} signal={sig} />)}
+            </div>
+          )}
+          <p className="text-xs text-text-faint text-center">{signals.length} signals · last {days} days · click row to expand QA breakdown</p>
+        </div>
+      )}
+
+      {/* ── TAB: QA Stats ────────────────────────────────────────────────── */}
+      {activeTab === "stats" && (
+        <div className="space-y-6">
+          {statsLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-24 bg-surface border border-border rounded-xl animate-pulse" />
+            ))}</div>
+          ) : stats ? (
+            <>
+              {/* Overall */}
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                <StatCard label="Total Signals" value={stats.overall.total} />
+                <StatCard label="Win Rate" value={winRate(stats.overall.wins, stats.overall.losses)} color="text-long" />
+                <StatCard label="Wins (TP Hit)" value={stats.overall.wins} color="text-long" />
+                <StatCard label="Losses (SL)" value={stats.overall.losses} color="text-short" />
+                <StatCard label="Expired" value={stats.overall.expired} color="text-text-muted" />
+                <StatCard label="Avg Confidence" value={`${stats.overall.avg_confidence ?? "—"}%`} />
+                <StatCard label="Avg R/R" value={`${stats.overall.avg_rr ?? "—"}R`} />
+              </div>
+
+              {/* By Timeframe */}
+              <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-purple" /> Performance by Timeframe
+                  </p>
+                </div>
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                    <th className="px-4 py-2 text-left">TF</th>
+                    <th className="px-4 py-2 text-right">Signals</th>
+                    <th className="px-4 py-2 text-right">Wins</th>
+                    <th className="px-4 py-2 text-right">Losses</th>
+                    <th className="px-4 py-2 text-right">Win Rate</th>
+                    <th className="px-4 py-2 text-right">Avg Conf</th>
+                  </tr></thead>
+                  <tbody>
+                    {stats.by_timeframe.map((row) => (
+                      <tr key={row.timeframe} className="border-b border-border hover:bg-surface-2">
+                        <td className="px-4 py-2 font-mono text-text-primary">{row.timeframe}</td>
+                        <td className="px-4 py-2 text-right text-text-secondary">{row.total}</td>
+                        <td className="px-4 py-2 text-right text-long">{row.wins}</td>
+                        <td className="px-4 py-2 text-right text-short">{row.losses}</td>
+                        <td className="px-4 py-2 text-right font-mono">
+                          <span className={row.win_rate != null && row.win_rate >= 50 ? "text-long" : "text-short"}>
+                            {row.win_rate != null ? `${row.win_rate}%` : "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-text-muted">{row.avg_confidence}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Confidence bands */}
+              <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-purple" /> Confidence Band Distribution
+                  </p>
+                </div>
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                    <th className="px-4 py-2 text-left">Band</th>
+                    <th className="px-4 py-2 text-right">Count</th>
+                    <th className="px-4 py-2 text-right">Wins</th>
+                    <th className="px-4 py-2 text-right">Losses</th>
+                    <th className="px-4 py-2 text-right">Win Rate</th>
+                  </tr></thead>
+                  <tbody>
+                    {stats.confidence_bands.map((row) => (
+                      <tr key={row.band} className="border-b border-border hover:bg-surface-2">
+                        <td className="px-4 py-2 text-text-primary text-xs">{row.band}</td>
+                        <td className="px-4 py-2 text-right text-text-secondary">{row.count}</td>
+                        <td className="px-4 py-2 text-right text-long">{row.wins}</td>
+                        <td className="px-4 py-2 text-right text-short">{row.losses}</td>
+                        <td className="px-4 py-2 text-right font-mono">
+                          <span className={row.win_rate != null && row.win_rate >= 50 ? "text-long" : "text-short"}>
+                            {row.win_rate != null ? `${row.win_rate}%` : "—"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+        </div>
+      )}
+
+      {/* ── TAB: Noisy Pairs ──────────────────────────────────────────────── */}
+      {activeTab === "noisy" && (
+        <div className="space-y-4">
+          {statsLoading ? (
+            <div className="h-64 bg-surface border border-border rounded-xl animate-pulse" />
+          ) : stats ? (
+            <div className="bg-surface border border-border rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-short" /> Most Active Pairs (last {days}d) — sorted by signal volume
+                </p>
+                <p className="text-xs text-text-muted mt-0.5">High count + low win rate = noisy pair needing tighter filters</p>
+              </div>
+              <table className="w-full text-sm">
+                <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                  <th className="px-4 py-2 text-left">Pair</th>
+                  <th className="px-4 py-2 text-right">Signals</th>
+                  <th className="px-4 py-2 text-right">Wins</th>
+                  <th className="px-4 py-2 text-right">Losses</th>
+                  <th className="px-4 py-2 text-right">Win Rate</th>
+                  <th className="px-4 py-2 text-right">Avg Conf</th>
+                  <th className="px-4 py-2 text-right">Verdict</th>
+                </tr></thead>
+                <tbody>
+                  {stats.noisy_pairs.map((row) => {
+                    const wr = row.win_rate;
+                    const isNoisy = row.signal_count >= 5 && (wr == null || wr < 40);
+                    const isGood = row.signal_count >= 3 && wr != null && wr >= 60;
+                    return (
+                      <tr key={row.symbol} className="border-b border-border hover:bg-surface-2">
+                        <td className="px-4 py-2 font-mono font-bold text-text-primary">{row.symbol}</td>
+                        <td className="px-4 py-2 text-right font-mono">{row.signal_count}</td>
+                        <td className="px-4 py-2 text-right text-long">{row.wins}</td>
+                        <td className="px-4 py-2 text-right text-short">{row.losses}</td>
+                        <td className="px-4 py-2 text-right font-mono">
+                          <span className={wr != null && wr >= 50 ? "text-long" : "text-short"}>
+                            {wr != null ? `${wr}%` : "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right text-text-muted">{row.avg_confidence}%</td>
+                        <td className="px-4 py-2 text-right">
+                          {isNoisy && <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-short">Noisy</span>}
+                          {isGood && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-long">Strong</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}

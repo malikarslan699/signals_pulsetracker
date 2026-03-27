@@ -1,0 +1,108 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0B0E1A;
+  --surface: #111827;
+  --surface-2: #1F2937;
+  --border: #374151;
+  --long: #10B981;
+  --short: #EF4444;
+  --gold: #F59E0B;
+  --purple: #8B5CF6;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--background);
+  color: #F9FAFB;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track { background: #111827; }
+::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #4B5563; }
+
+/* Number formatting */
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+
+/* Glow effects */
+.glow-long { box-shadow: 0 0 20px rgba(16, 185, 129, 0.2); }
+.glow-short { box-shadow: 0 0 20px rgba(239, 68, 68, 0.2); }
+.glow-purple { box-shadow: 0 0 20px rgba(139, 92, 246, 0.2); }
+
+/* Card hover */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+/* Signal card long */
+.signal-card-long {
+  border-left: 3px solid #10B981;
+  background: linear-gradient(135deg, #111827 0%, rgba(6, 78, 59, 0.06) 100%);
+}
+
+/* Signal card short */
+.signal-card-short {
+  border-left: 3px solid #EF4444;
+  background: linear-gradient(135deg, #111827 0%, rgba(127, 29, 29, 0.06) 100%);
+}
+
+/* Confidence bar */
+.confidence-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: #1F2937;
+}
+
+/* Live indicator */
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10B981;
+  animation: pulse 2s infinite;
+}
+
+/* Page fade in */
+.page-enter {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Table row highlight */
+.row-long {
+  border-left: 2px solid #10B981;
+}
+.row-short {
+  border-left: 2px solid #EF4444;
+}
+
+/* Ticker scroll */
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.ticker-scroll {
+  animation: ticker-scroll 40s linear infinite;
+}
+.ticker-scroll:hover {
+  animation-play-state: paused;
+}

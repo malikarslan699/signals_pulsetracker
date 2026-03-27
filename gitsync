@@ -1,0 +1,90 @@
+#!/bin/bash
+# gitsync — Push/Pull trading_indicator_pro to GitHub
+# Token is read from .gitsync_token (gitignored, never committed)
+
+BRANCH="main"
+REPO_HOST="github.com/malikarslan699/signals_pulsetracker.git"
+TOKEN_FILE="$(dirname "$0")/.gitsync_token"
+
+cd "$(dirname "$0")"
+
+# Read token
+if [ ! -f "$TOKEN_FILE" ]; then
+  echo "ERROR: .gitsync_token file not found."
+  echo "Create it: echo 'YOUR_TOKEN' > .gitsync_token"
+  exit 1
+fi
+TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+REPO_URL="https://malikarslan699:${TOKEN}@${REPO_HOST}"
+
+# Init git if not already
+if [ ! -d ".git" ]; then
+  git init
+  git branch -M "$BRANCH"
+  echo "Git initialized."
+fi
+
+# Set remote
+if git remote get-url origin &>/dev/null; then
+  git remote set-url origin "$REPO_URL"
+else
+  git remote add origin "$REPO_URL"
+fi
+
+# Create .gitignore if missing
+if [ ! -f ".gitignore" ]; then
+cat > .gitignore << 'EOF'
+# Secrets
+.env
+.env.*
+!.env.example
+.gitsync_token
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Logs
+*.log
+logs/
+
+# DB / Cache
+*.sqlite
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+EOF
+  echo ".gitignore created."
+fi
+
+# Stage all
+git add -A
+
+# Commit
+MSG="${1:-sync: $(date '+%Y-%m-%d %H:%M:%S')}"
+git commit -m "$MSG" 2>/dev/null || echo "Nothing new to commit."
+
+# Push
+git push -u origin "$BRANCH" 2>&1
+
+echo ""
+echo "Done. Branch: $BRANCH"
