@@ -18,7 +18,7 @@ export interface Signal {
   take_profit_2: number;
   take_profit_3?: number;
   rr_ratio: number;
-  status: "active" | "tp1_hit" | "tp2_hit" | "tp3_hit" | "sl_hit" | "expired";
+  status: "active" | "tp1_hit" | "tp2_hit" | "tp3_hit" | "sl_hit" | "expired" | "invalidated";
   score_breakdown?: Record<string, ScoreItem>;
   ict_zones?: {
     order_blocks?: { bullish: any[]; bearish: any[] };
