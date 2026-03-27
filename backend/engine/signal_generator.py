@@ -129,11 +129,11 @@ class SignalGenerator:
     """
 
     # Minimum confidence required to emit a signal (0-100)
-    # Set to 75 for HIGH-quality signals only (≥ HIGH band on sigmoid curve)
-    MIN_CONFIDENCE: int = 75
+    # Set to 78 — tighter than before to reduce weak/marginal signals
+    MIN_CONFIDENCE: int = 78
 
     # Minimum gap between long and short confidence to avoid ambiguous calls
-    MIN_DIRECTION_GAP: int = 15
+    MIN_DIRECTION_GAP: int = 20
 
     # Timeframe reliability weights used in MTF confidence boost calculation
     TF_WEIGHTS: dict[str, float] = {
@@ -328,6 +328,31 @@ class SignalGenerator:
         if required_tf and required_tf in mtf_analysis:
             if not mtf_analysis[required_tf].get('aligned'):
                 return None  # HTF disagrees — do not fire
+
+        # ── Low-volatility gate ────────────────────────────────────────────
+        # Avoid signals in dead/flat zones — choppy price action kills RR.
+        try:
+            from .indicators.volatility import atr_analysis as _atr_fn
+            _atr_info = _atr_fn(highs, lows, closes, float(closes[-1]), winner.direction)
+            _atr_pct = _atr_info.get('atr_pct', 0.0)
+            if isinstance(_atr_pct, float) and _atr_pct < 0.25:
+                return None  # ATR < 0.25% of price — too flat/choppy
+        except Exception:
+            pass
+
+        # ── Minimum R:R gate ──────────────────────────────────────────────
+        # Only fire if TP distance is at least 1.5× the SL distance.
+        if winner.rr_ratio < 1.5:
+            return None
+
+        # ── Trend alignment gate ──────────────────────────────────────────
+        # Require at least one trend indicator OR two ICT/structure confirms
+        # aligned with signal direction. Blocks pure counter-trend signals.
+        trend_hits = sum(1 for s in winner.trend_scores if s.triggered and s.score > 0)
+        ict_hits = sum(1 for s in winner.ict_scores if s.triggered and s.score > 0)
+        struct_hits = sum(1 for s in winner.structure_scores if s.triggered and s.score > 0)
+        if trend_hits == 0 and (ict_hits + struct_hits) < 2:
+            return None  # No trend + insufficient ICT/structure — reject
 
         # ── Candle snapshot (last 5 candles) ──────────────────────────────
         snapshot_candles = candles[-5:]

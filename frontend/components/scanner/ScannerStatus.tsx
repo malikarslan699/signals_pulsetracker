@@ -42,74 +42,47 @@ export function ScannerStatus({ status }: ScannerStatusProps) {
 
   return (
     <div
-      className={`flex flex-wrap items-center gap-4 px-4 py-3 rounded-xl border ${
+      className={`flex flex-wrap items-center gap-3 px-3 py-1.5 rounded-lg border text-xs font-mono ${
         isActive
           ? "bg-long/5 border-long/20"
           : "bg-surface border-border"
       }`}
     >
-      {/* Status indicator */}
-      <div className="flex items-center gap-2">
-        <div
-          className={`w-2 h-2 rounded-full ${
-            isActive ? "bg-long animate-pulse" : "bg-text-muted"
-          }`}
-        />
-        <Activity
-          className={`w-4 h-4 ${isActive ? "text-long" : "text-text-muted"}`}
-        />
-        <span
-          className={`text-sm font-bold tracking-wide ${
-            isActive ? "text-long" : "text-text-muted"
-          }`}
-        >
-          SCANNER {isActive ? "ACTIVE" : "IDLE"}
+      <div className="flex items-center gap-1.5">
+        <div className={`w-1.5 h-1.5 rounded-full ${isActive ? "bg-long animate-pulse" : "bg-text-muted"}`} />
+        <span className={`font-bold tracking-widest text-[10px] ${isActive ? "text-long" : "text-text-muted"}`}>
+          {isActive ? "SCANNING" : "IDLE"}
         </span>
       </div>
 
-      <div className="h-4 w-px bg-border hidden sm:block" />
+      <div className="w-px h-3 bg-border hidden sm:block" />
 
-      {/* Last scan */}
       {status?.last_scan && (
-        <div className="flex items-center gap-1.5 text-xs text-text-muted">
-          <Clock className="w-3.5 h-3.5" />
-          <span>Last scan: {formatTimeAgo(status.last_scan)}</span>
+        <div className="flex items-center gap-1 text-text-muted">
+          <Clock className="w-3 h-3" />
+          <span>Last: {formatTimeAgo(status.last_scan)}</span>
         </div>
       )}
 
-      {/* Next scan countdown */}
-      <div className="flex items-center gap-1.5 text-xs text-text-muted">
-        <Zap className="w-3.5 h-3.5 text-gold" />
-        <span>
-          Next scan:{" "}
-          <span className="font-mono font-bold text-gold">{countdown}</span>
-        </span>
+      <div className="flex items-center gap-1 text-text-muted">
+        <Zap className="w-3 h-3 text-gold" />
+        <span>Next: <span className="font-bold text-gold">{countdown}</span></span>
       </div>
 
-      <div className="h-4 w-px bg-border hidden sm:block" />
-
-      {/* Pairs scanned */}
       {status?.pairs_scanned !== undefined && (
-        <div className="flex items-center gap-1.5 text-xs text-text-muted">
-          <Search className="w-3.5 h-3.5 text-blue" />
-          <span>
-            <span className="font-mono font-bold text-blue">
-              {status.pairs_scanned}
-            </span>{" "}
-            pairs scanned
-          </span>
-        </div>
+        <>
+          <div className="w-px h-3 bg-border hidden sm:block" />
+          <div className="flex items-center gap-1 text-text-muted">
+            <Search className="w-3 h-3 text-blue" />
+            <span><span className="font-bold text-blue">{status.pairs_scanned}</span> pairs</span>
+          </div>
+        </>
       )}
 
-      {/* Signals found */}
       {status?.signals_found !== undefined && (
-        <div className="flex items-center gap-1.5 text-xs text-text-muted ml-auto">
-          <span>
-            <span className="font-mono font-bold text-purple">
-              {status.signals_found}
-            </span>{" "}
-            signals found
-          </span>
+        <div className="flex items-center gap-1 text-text-muted ml-auto">
+          <Activity className="w-3 h-3 text-purple" />
+          <span><span className="font-bold text-purple">{status.signals_found}</span> found</span>
         </div>
       )}
     </div>

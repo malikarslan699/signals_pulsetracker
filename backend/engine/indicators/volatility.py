@@ -76,8 +76,9 @@ def atr_analysis(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
                  entry: float, direction: str) -> dict:
     """
     Risk management levels based on ATR.
-    LONG:  SL = entry - 1.5*ATR, TP1 = entry + 2.0*ATR, TP2 = entry + 3.5*ATR, TP3 = entry + 5.0*ATR
-    SHORT: SL = entry + 1.5*ATR, TP1 = entry - 2.0*ATR, TP2 = entry - 3.5*ATR, TP3 = entry - 5.0*ATR
+    LONG:  SL = entry - 2.0*ATR, TP1 = entry + 3.0*ATR, TP2 = entry + 5.0*ATR, TP3 = entry + 7.0*ATR
+    SHORT: SL = entry + 2.0*ATR, TP1 = entry - 3.0*ATR, TP2 = entry - 5.0*ATR, TP3 = entry - 7.0*ATR
+    RR: TP1=1.5R, TP2=2.5R, TP3=3.5R (minimum 1.5R guaranteed)
     """
     atr_arr = atr(highs, lows, closes, 14)
     valid = atr_arr[~np.isnan(atr_arr)]
@@ -87,7 +88,7 @@ def atr_analysis(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
             'stop_loss': np.nan,
             'take_profit_1': np.nan, 'take_profit_2': np.nan, 'take_profit_3': np.nan,
             'rr_ratio_tp1': np.nan, 'rr_ratio_tp2': np.nan,
-            'is_high_volatility': False, 'score': 0,
+            'is_high_volatility': False, 'is_low_volatility': True, 'score': 0,
         }
 
     atr_val = float(valid[-1])
@@ -95,21 +96,22 @@ def atr_analysis(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
 
     direction = direction.upper()
     if direction == 'LONG':
-        stop_loss    = entry - 1.5 * atr_val
-        take_profit1 = entry + 2.0 * atr_val
-        take_profit2 = entry + 3.5 * atr_val
-        take_profit3 = entry + 5.0 * atr_val
+        stop_loss    = entry - 2.0 * atr_val
+        take_profit1 = entry + 3.0 * atr_val
+        take_profit2 = entry + 5.0 * atr_val
+        take_profit3 = entry + 7.0 * atr_val
     else:  # SHORT
-        stop_loss    = entry + 1.5 * atr_val
-        take_profit1 = entry - 2.0 * atr_val
-        take_profit2 = entry - 3.5 * atr_val
-        take_profit3 = entry - 5.0 * atr_val
+        stop_loss    = entry + 2.0 * atr_val
+        take_profit1 = entry - 3.0 * atr_val
+        take_profit2 = entry - 5.0 * atr_val
+        take_profit3 = entry - 7.0 * atr_val
 
     risk = abs(entry - stop_loss)
     rr1 = abs(take_profit1 - entry) / risk if risk != 0 else 0.0
     rr2 = abs(take_profit2 - entry) / risk if risk != 0 else 0.0
 
-    is_high_vol = bool(atr_pct > 2.0)
+    is_high_vol = bool(atr_pct > 1.5)
+    is_low_vol = bool(atr_pct < 0.25)
     score = 5 if is_high_vol else 0
 
     return {
@@ -122,6 +124,7 @@ def atr_analysis(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
         'rr_ratio_tp1':     round(rr1, 2),
         'rr_ratio_tp2':     round(rr2, 2),
         'is_high_volatility': is_high_vol,
+        'is_low_volatility':  is_low_vol,
         'score':            score,
     }
 

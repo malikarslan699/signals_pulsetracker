@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Signal } from "@/types/signal";
 import { formatPrice, formatTimeAgo, getStatusLabel, getStatusColor } from "@/lib/formatters";
-import { History, TrendingUp, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Clock } from "lucide-react";
+import { History, TrendingUp, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Clock, Activity } from "lucide-react";
 import Link from "next/link";
 
 type SortKey = "confidence" | "entry" | "take_profit_1" | "stop_loss" | "pnl_pct" | "fired_at";
@@ -24,7 +24,7 @@ function SortTh({
 }) {
   return (
     <th
-      className={`px-4 py-3 font-medium cursor-pointer select-none hover:text-text-primary transition-colors ${right ? "text-right" : ""}`}
+      className={`px-3 py-2 font-medium cursor-pointer select-none hover:text-text-primary transition-colors ${right ? "text-right" : ""}`}
       onClick={() => onSort(sortKey)}
     >
       <span className={`flex items-center gap-1 ${right ? "justify-end" : ""}`}>
