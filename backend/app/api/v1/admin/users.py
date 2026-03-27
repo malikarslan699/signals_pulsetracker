@@ -146,6 +146,11 @@ async def update_user(
         user.is_verified = payload.is_verified
     if payload.market_access is not None:
         user.market_access = payload.market_access
+    # Only owner can grant/revoke QA Lab access
+    if payload.qa_access is not None:
+        if current_admin.role not in ("owner", "superadmin"):
+            raise ConflictError("Only owner can grant QA Lab access.")
+        user.qa_access = payload.qa_access
 
     await db.flush()
     logger.info(

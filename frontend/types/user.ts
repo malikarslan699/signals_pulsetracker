@@ -9,6 +9,7 @@ export interface User {
   telegram_chat_id?: number;
   is_verified?: boolean;
   is_active: boolean;
+  qa_access?: boolean;
   created_at: string;
 }
 

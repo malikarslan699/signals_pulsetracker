@@ -15,10 +15,20 @@ from app.core.auth import get_current_active_user, require_role
 from app.database import get_db
 from app.models.user import User
 
+async def require_qa_access(current_user: User = Depends(get_current_active_user)) -> User:
+    """Allow owner always; allow admin only if qa_access=True."""
+    if current_user.role in ("owner", "superadmin"):
+        return current_user
+    if current_user.role == "admin" and getattr(current_user, "qa_access", False):
+        return current_user
+    from fastapi import HTTPException
+    raise HTTPException(status_code=403, detail="QA Lab access not granted.")
+
+
 router = APIRouter(
     prefix="/admin/qa",
     tags=["Admin — QA Research"],
-    dependencies=[Depends(require_role("admin", "owner"))],
+    dependencies=[Depends(require_qa_access)],
 )
 
 

@@ -20,6 +20,7 @@ interface AdminUser {
   role: string;
   is_active: boolean;
   is_verified: boolean;
+  qa_access: boolean;
   telegram_chat_id: string | null;
   telegram_username: string | null;
   created_at: string;
@@ -152,9 +153,10 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
 /* ──────────────────────────────────────────────────────
    Edit User Modal (full editing)
 ────────────────────────────────────────────────────── */
-function EditUserModal({ user, canManageOwner, onClose }: {
+function EditUserModal({ user, canManageOwner, isOwner, onClose }: {
   user: AdminUser;
   canManageOwner: boolean;
+  isOwner: boolean;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -162,9 +164,11 @@ function EditUserModal({ user, canManageOwner, onClose }: {
   const [role, setRole] = useState(user.role);
   const [isActive, setIsActive] = useState(user.is_active);
   const [isVerified, setIsVerified] = useState(user.is_verified);
+  const [qaAccess, setQaAccess] = useState(user.qa_access ?? false);
   const [newPassword, setNewPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
-  // Auto-compute expiry when plan changes
+
+  // Always auto-compute expiry from today when plan changes
   const autoExpiry = (selectedPlan: string): string => {
     const now = new Date();
     if (selectedPlan === "trial") {
@@ -185,12 +189,10 @@ function EditUserModal({ user, canManageOwner, onClose }: {
   const roleOptions = canManageOwner ? [...ROLE_OPTIONS_BASE, "superadmin"] : ROLE_OPTIONS_BASE;
   const isTimeLimited = plan === "monthly" || plan === "yearly" || plan === "trial";
 
+  // Always recalculate from today when plan changes
   const handlePlanChange = (newPlan: string) => {
     setPlan(newPlan);
-    // Only auto-set if the expiry wasn't already manually edited for the same plan
-    if (newPlan !== user.plan || !user.plan_expires_at) {
-      setPlanExpiry(autoExpiry(newPlan));
-    }
+    setPlanExpiry(autoExpiry(newPlan));
   };
 
   const updateMutation = useMutation({
@@ -203,6 +205,10 @@ function EditUserModal({ user, canManageOwner, onClose }: {
       }
       if (newPassword && newPassword.length >= 8) {
         payload.password = newPassword;
+      }
+      // Only send qa_access if current user is owner
+      if (isOwner) {
+        payload.qa_access = qaAccess;
       }
       return api.put(`/api/v1/admin/users/${user.id}`, payload).then((r) => r.data);
     },
@@ -280,6 +286,27 @@ function EditUserModal({ user, canManageOwner, onClose }: {
                 onChange={(e) => setPlanExpiry(e.target.value)}
                 className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple"
               />
+            </div>
+          )}
+
+          {/* QA Lab Access — owner only, shown when editing admins */}
+          {isOwner && (role === "admin" || role === "superadmin") && (
+            <div className="flex items-center justify-between p-3 bg-surface-2 border border-purple/20 rounded-lg">
+              <div>
+                <p className="text-sm font-medium text-text-primary flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-purple" /> QA Lab Access
+                </p>
+                <p className="text-xs text-text-muted mt-0.5">Allow this admin to view QA research</p>
+              </div>
+              <button type="button" onClick={() => setQaAccess((v) => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                  qaAccess
+                    ? "bg-purple/10 border-purple/30 text-purple"
+                    : "bg-surface border-border text-text-muted"
+                }`}>
+                {qaAccess ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                {qaAccess ? "Granted" : "Revoked"}
+              </button>
             </div>
           )}
 
@@ -539,6 +566,7 @@ export default function AdminUsersPage() {
         <EditUserModal
           user={editingUser}
           canManageOwner={canManageOwner}
+          isOwner={canManageOwner}
           onClose={() => setEditingUser(null)}
         />
       )}

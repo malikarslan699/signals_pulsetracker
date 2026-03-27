@@ -55,6 +55,7 @@ class UserResponse(BaseModel):
     market_access: str = "both"
     is_active: bool
     is_verified: bool
+    qa_access: bool = False
     telegram_chat_id: Optional[int] = None
     telegram_username: Optional[str] = None
     created_at: datetime
@@ -90,6 +91,7 @@ class UserAdminUpdate(BaseModel):
     plan_expires_at: Optional[datetime] = None
     is_active: Optional[bool] = None
     is_verified: Optional[bool] = None
+    qa_access: Optional[bool] = None
     market_access: Optional[str] = Field(
         default=None, pattern=r"^(crypto|forex|both)$"
     )

@@ -70,6 +70,9 @@ class User(Base):
         String(64), unique=True, nullable=True, index=True
     )
 
+    # QA Lab access (granted by owner to specific admins)
+    qa_access: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

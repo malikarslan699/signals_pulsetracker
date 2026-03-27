@@ -5,19 +5,28 @@ import Link from "next/link";
 import { Shield } from "lucide-react";
 import { useAuthStore } from "@/store/userStore";
 
-const navLinks = [
+const BASE_NAV = [
   { label: "Overview", href: "/admin" },
   { label: "Users", href: "/admin/users" },
   { label: "Packages", href: "/admin/packages" },
   { label: "Config", href: "/admin/config" },
   { label: "Analytics", href: "/admin/analytics" },
-  { label: "QA Lab", href: "/admin/qa" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname();
+
+  // QA Lab: owner/superadmin always, admin only if qa_access granted by owner
+  const canSeeQA =
+    user?.role === "owner" ||
+    user?.role === "superadmin" ||
+    (user?.role === "admin" && user?.qa_access === true);
+
+  const navLinks = canSeeQA
+    ? [...BASE_NAV, { label: "QA Lab", href: "/admin/qa" }]
+    : BASE_NAV;
 
   useEffect(() => {
     if (user && user.role !== "admin" && user.role !== "owner" && user.role !== "superadmin") {
