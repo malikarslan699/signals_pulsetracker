@@ -161,8 +161,8 @@ export default function HistoryPage() {
         <div className="bg-surface border border-border rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-surface-2">
+              <thead className="sticky top-0 z-10">
+                <tr className="border-b border-border bg-surface-2/95 backdrop-blur-sm">
                   <th className="text-left px-4 py-3 text-text-muted font-medium">Pair</th>
                   <th className="text-left px-4 py-3 text-text-muted font-medium">Dir</th>
                   <th className="text-left px-4 py-3 text-text-muted font-medium">TF</th>
@@ -176,11 +176,13 @@ export default function HistoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {signals.map((signal, i) => {
+                {signals.map((signal) => {
                   const isLong = signal.direction === "LONG";
                   const pnlN = signal.pnl_pct != null ? parseFloat(String(signal.pnl_pct)) : null;
+                  const isWin = signal.status?.includes("tp");
+                  const isLoss = signal.status === "sl_hit";
                   return (
-                    <tr key={signal.id} className={`border-b border-border hover:bg-surface-2 transition-colors ${i % 2 === 0 ? "" : "bg-surface-2/30"}`}>
+                    <tr key={signal.id} className={`border-b border-border transition-colors ${isWin ? "row-win" : isLoss ? "row-loss" : "hover:bg-surface-2/60"}`}>
                       <td className="px-4 py-3">
                         <Link href={`/signal/${signal.id}`} className="font-mono font-semibold text-text-primary hover:text-purple">
                           {signal.symbol}
@@ -198,7 +200,15 @@ export default function HistoryPage() {
                       <td className="px-4 py-3 text-right font-mono text-long">{formatPrice(signal.take_profit_1)}</td>
                       <td className="px-4 py-3 text-right font-mono text-short">{formatPrice(signal.stop_loss)}</td>
                       <td className="px-4 py-3 text-center">
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${getStatusColor(signal.status)}`}>
+                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
+                          signal.status?.includes("tp")
+                            ? "bg-long/10 text-long border-long/20"
+                            : signal.status === "sl_hit"
+                            ? "bg-short/10 text-short border-short/20"
+                            : signal.status === "active"
+                            ? "bg-blue/10 text-blue border-blue/20"
+                            : "bg-surface-2 text-text-muted border-border"
+                        }`}>
                           {getStatusLabel(signal.status)}
                         </span>
                       </td>

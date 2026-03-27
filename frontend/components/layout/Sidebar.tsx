@@ -77,10 +77,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               key={item.href}
               href={item.href}
               onClick={onClose}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
                 isActive
-                  ? "bg-purple text-white shadow-lg shadow-purple/20"
-                  : "text-text-muted hover:text-text-primary hover:bg-surface-2"
+                  ? "bg-purple/15 text-purple border border-purple/25 shadow-sm"
+                  : "text-text-muted hover:text-text-primary hover:bg-surface-2 border border-transparent"
               }`}
             >
               <Icon className="w-4 h-4 flex-shrink-0" />

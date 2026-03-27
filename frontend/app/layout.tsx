@@ -17,13 +17,20 @@ export const metadata: Metadata = {
   },
 };
 
+// Inline script runs synchronously before paint — prevents theme flash
+const themeScript = `(function(){try{var t=localStorage.getItem('theme');if(t==='light'){document.documentElement.classList.remove('dark')}else{document.documentElement.classList.add('dark')}}catch(e){document.documentElement.classList.add('dark')}})();`;
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        {/* Theme init before first paint — no flash */}
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="bg-background text-text-primary min-h-screen">
         <Providers>
           {children}
@@ -31,10 +38,18 @@ export default function RootLayout({
             position="top-right"
             toastOptions={{
               style: {
-                background: "#1F2937",
-                color: "#F9FAFB",
-                border: "1px solid #374151",
-                borderRadius: "8px",
+                background: "rgb(var(--color-surface))",
+                color: "rgb(var(--color-text-primary))",
+                border: "1px solid rgb(var(--color-border))",
+                borderRadius: "10px",
+                fontSize: "14px",
+                boxShadow: "0 8px 32px rgb(0 0 0 / 0.2)",
+              },
+              success: {
+                iconTheme: { primary: "#10B981", secondary: "white" },
+              },
+              error: {
+                iconTheme: { primary: "#EF4444", secondary: "white" },
               },
             }}
           />
