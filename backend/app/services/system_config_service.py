@@ -44,7 +44,13 @@ class IntegrationConfig(BaseModel):
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_monthly_price_id: str = ""
+    stripe_yearly_price_id: str = ""
     stripe_lifetime_price_id: str = ""
+    # Crypto payment wallet addresses (shown to users on payment page)
+    crypto_wallet_bep20: str = ""   # USDT BEP-20 (BSC)
+    crypto_wallet_trc20: str = ""   # USDT TRC-20 (Tron)
+    crypto_wallet_btc: str = ""     # Bitcoin
+    crypto_wallet_eth: str = ""     # Ethereum / USDT ERC-20
 
 
 class SystemConfig(BaseModel):

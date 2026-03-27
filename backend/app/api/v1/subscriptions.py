@@ -579,7 +579,7 @@ async def submit_crypto_payment(
                 f"Submitted: {request_data['submitted_at']}\n\n"
                 f"ACTION: Verify on blockchain explorer, then go to Admin → Users → set plan to {payload.plan}."
             )
-            await send_email(smtp, to_email=smtp_from, subject=subject, body=body)
+            await send_email(smtp, to_email=smtp_from, subject=subject, text_body=body)
     except Exception as e:
         logger.warning(f"Could not send owner email for crypto payment: {e}")
 

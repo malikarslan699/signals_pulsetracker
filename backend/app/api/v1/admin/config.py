@@ -288,6 +288,49 @@ async def check_telegram_provider(
 
 
 
+@router.get(
+    "/crypto-payments",
+    summary="List all pending crypto payment submissions",
+)
+async def list_crypto_payments(
+    redis: RedisClient = Depends(get_redis_client),
+    current_admin: User = Depends(require_role("admin", "owner")),
+) -> dict:
+    """Return all pending crypto payments stored in Redis."""
+    import json as _json
+    raw_keys = await redis._r.lrange("crypto:payments:pending", 0, -1)
+    payments = []
+    for key in raw_keys:
+        raw = await redis._r.get(key)
+        if raw:
+            try:
+                payments.append(_json.loads(raw))
+            except Exception:
+                pass
+    # Deduplicate by user_id+plan (keep latest)
+    seen: dict = {}
+    for p in payments:
+        k = f"{p.get('user_id')}:{p.get('plan')}"
+        seen[k] = p
+    return {"payments": list(seen.values())}
+
+
+@router.post(
+    "/crypto-payments/{user_id}/{plan}/reject",
+    summary="Reject a pending crypto payment",
+)
+async def reject_crypto_payment(
+    user_id: str,
+    plan: str,
+    redis: RedisClient = Depends(get_redis_client),
+    current_admin: User = Depends(require_role("admin", "owner")),
+) -> dict:
+    """Delete the pending crypto payment key from Redis (rejection = delete)."""
+    redis_key = f"crypto:payment:{user_id}:{plan}"
+    await redis._r.delete(redis_key)
+    return {"status": "rejected", "user_id": user_id, "plan": plan}
+
+
 @router.post(
     "/purge-signals",
     summary="Purge low-quality signals from Redis and mark them expired in DB",

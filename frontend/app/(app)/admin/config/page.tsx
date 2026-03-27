@@ -46,7 +46,12 @@ interface SystemConfig {
     stripe_secret_key: string;
     stripe_webhook_secret: string;
     stripe_monthly_price_id: string;
+    stripe_yearly_price_id: string;
     stripe_lifetime_price_id: string;
+    crypto_wallet_bep20: string;
+    crypto_wallet_trc20: string;
+    crypto_wallet_btc: string;
+    crypto_wallet_eth: string;
   };
 }
 
@@ -101,7 +106,12 @@ const defaultConfig: SystemConfig = {
     stripe_secret_key: "",
     stripe_webhook_secret: "",
     stripe_monthly_price_id: "",
+    stripe_yearly_price_id: "",
     stripe_lifetime_price_id: "",
+    crypto_wallet_bep20: "",
+    crypto_wallet_trc20: "",
+    crypto_wallet_btc: "",
+    crypto_wallet_eth: "",
   },
 };
 
@@ -346,7 +356,13 @@ export default function AdminConfigPage() {
     key: keyof SystemConfig["smtp"],
     value: string | boolean | number
   ) => {
-    setForm((prev) => ({ ...prev, smtp: { ...prev.smtp, [key]: value } }));
+    setForm((prev) => {
+      const updated = { ...prev.smtp, [key]: value };
+      // SSL and TLS are mutually exclusive
+      if (key === "use_ssl" && value === true) updated.use_tls = false;
+      if (key === "use_tls" && value === true) updated.use_ssl = false;
+      return { ...prev, smtp: updated };
+    });
     setDirty(true);
   };
 
@@ -525,10 +541,18 @@ export default function AdminConfigPage() {
             placeholder="owner@email.com"
           />
         </div>
+        {dirty && (
+          <p className="text-xs text-gold bg-gold/10 border border-gold/20 rounded-lg px-3 py-2">
+            You have unsaved changes. Save configuration first, then check SMTP.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => smtpCheckMutation.mutate(false)}
+            onClick={() => {
+              if (dirty) { toast.error("Save configuration first before checking SMTP."); return; }
+              smtpCheckMutation.mutate(false);
+            }}
             disabled={smtpCheckMutation.isPending}
             className="px-3 py-2 text-xs rounded-lg border border-border bg-surface-2 text-text-primary hover:border-purple disabled:opacity-60"
           >
@@ -536,7 +560,10 @@ export default function AdminConfigPage() {
           </button>
           <button
             type="button"
-            onClick={() => smtpCheckMutation.mutate(true)}
+            onClick={() => {
+              if (dirty) { toast.error("Save configuration first before sending test email."); return; }
+              smtpCheckMutation.mutate(true);
+            }}
             disabled={smtpCheckMutation.isPending}
             className="px-3 py-2 text-xs rounded-lg border border-long/30 bg-long/10 text-long hover:bg-long/20 disabled:opacity-60"
           >
@@ -612,7 +639,21 @@ export default function AdminConfigPage() {
           <SecretInput label="Stripe Secret Key" value={form.integrations.stripe_secret_key} onChange={(v) => setIntegration("stripe_secret_key", v)} disabled={!isOwner} hint="Stripe Dashboard → Developers → API Keys → Secret key" />
           <SecretInput label="Stripe Webhook Secret" value={form.integrations.stripe_webhook_secret} onChange={(v) => setIntegration("stripe_webhook_secret", v)} disabled={!isOwner} hint="Stripe → Webhooks → your endpoint → Signing secret" />
           <Input label="Stripe Monthly Price ID" value={form.integrations.stripe_monthly_price_id} onChange={(v) => setIntegration("stripe_monthly_price_id", v)} disabled={!isOwner} placeholder="price_xxx" />
+          <Input label="Stripe Yearly Price ID" value={form.integrations.stripe_yearly_price_id} onChange={(v) => setIntegration("stripe_yearly_price_id", v)} disabled={!isOwner} placeholder="price_xxx" />
           <Input label="Stripe Lifetime Price ID" value={form.integrations.stripe_lifetime_price_id} onChange={(v) => setIntegration("stripe_lifetime_price_id", v)} disabled={!isOwner} placeholder="price_xxx" />
+        </div>
+      </Section>
+
+      <Section title="Crypto Payment Wallets (Owner)">
+        <div className="text-xs text-text-muted bg-surface-2 rounded-lg p-3 border border-border mb-2">
+          These wallet addresses are shown to users on the payment page when they choose to pay with crypto.
+          Leave empty to hide that network option.
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Input label="USDT BEP-20 Address (BSC)" value={form.integrations.crypto_wallet_bep20} onChange={(v) => setIntegration("crypto_wallet_bep20", v)} disabled={!isOwner} placeholder="0x..." />
+          <Input label="USDT TRC-20 Address (Tron)" value={form.integrations.crypto_wallet_trc20} onChange={(v) => setIntegration("crypto_wallet_trc20", v)} disabled={!isOwner} placeholder="T..." />
+          <Input label="Bitcoin (BTC) Address" value={form.integrations.crypto_wallet_btc} onChange={(v) => setIntegration("crypto_wallet_btc", v)} disabled={!isOwner} placeholder="bc1..." />
+          <Input label="Ethereum / USDT ERC-20 Address" value={form.integrations.crypto_wallet_eth} onChange={(v) => setIntegration("crypto_wallet_eth", v)} disabled={!isOwner} placeholder="0x..." />
         </div>
       </Section>
 
