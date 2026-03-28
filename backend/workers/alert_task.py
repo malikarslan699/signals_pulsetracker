@@ -188,20 +188,6 @@ async def _send_signal_alerts_async(signal_id: str) -> dict:
                 except Exception:
                     pass
 
-        # 3) Legacy fallback: JSON members stored directly in signals:active
-        if not signal_data:
-            active_signals_raw = r.zrange('signals:active', 0, -1)
-            for raw in active_signals_raw:
-                try:
-                    sig = json_lib.loads(raw)
-                    if str(sig.get('id')) == str(signal_id):
-                        signal_data = sig
-                        # Warm id-key cache for future lookups.
-                        r.set(f'signal:id:{signal_id}', json_lib.dumps(sig), ex=86400)
-                        break
-                except Exception:
-                    pass
-
         if not signal_data:
             # Fallback: get from DB
             try:

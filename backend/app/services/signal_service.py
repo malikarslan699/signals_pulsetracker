@@ -18,6 +18,7 @@ from app.services.signal_lifecycle import (
     LOSS_SIGNAL_STATUSES,
     OPEN_SIGNAL_STATUSES,
     WIN_SIGNAL_STATUSES,
+    canonicalize_status,
     is_final_status,
 )
 
@@ -231,8 +232,7 @@ class SignalService:
         Calculates PnL % when a signal closes.
         """
         signal = await self.get_signal_by_id(signal_id)
-        signal.status = status
-        signal.closed_at = datetime.now(tz=timezone.utc)
+        signal.status = canonicalize_status(status)
 
         if close_price is not None:
             signal.close_price = close_price
@@ -246,12 +246,15 @@ class SignalService:
                     pnl = ((entry - close) / entry) * 100
                 signal.pnl_pct = Decimal(str(round(pnl, 4)))
 
+        if is_final_status(signal.status):
+            signal.closed_at = datetime.now(tz=timezone.utc)
+
         # Remove from Redis active set if closed
-        if is_final_status(status):
+        if is_final_status(signal.status):
             await self._redis.remove_signal(signal.symbol)
 
         await self._db.flush()
-        logger.info(f"Signal {signal_id} status updated to '{status}'.")
+        logger.info(f"Signal {signal_id} status updated to '{signal.status}'.")
         return signal
 
     async def mark_alert_sent(self, signal_id: UUID) -> None:
@@ -477,5 +480,8 @@ class SignalService:
             "fired_at": signal.fired_at.isoformat() if signal.fired_at else None,
             "valid_until": signal.valid_until.isoformat() if signal.valid_until else None,
             "expires_at": signal.expires_at.isoformat() if signal.expires_at else None,
+            "closed_at": signal.closed_at.isoformat() if signal.closed_at else None,
+            "close_price": float(signal.close_price) if signal.close_price is not None else None,
+            "pnl_pct": float(signal.pnl_pct) if signal.pnl_pct is not None else None,
             "alert_sent": signal.alert_sent,
         }

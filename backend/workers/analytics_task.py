@@ -9,10 +9,11 @@ from loguru import logger
 from workers.celery_app import app
 
 from app.services.pair_health_service import classify_pair_health
+from app.services.signal_lifecycle import LOSS_STATUS_SQL, OPEN_STATUS_SQL, WIN_STATUS_SQL
 
-OPEN_SQL = "('active','CREATED','ARMED','FILLED')"
-WIN_SQL = "('tp1_hit','tp2_hit','tp3_hit','TP1_REACHED','TP2_REACHED')"
-LOSS_SQL = "('sl_hit','STOPPED')"
+OPEN_SQL = OPEN_STATUS_SQL
+WIN_SQL = WIN_STATUS_SQL
+LOSS_SQL = LOSS_STATUS_SQL
 
 
 @app.task(name='workers.analytics_task.update_win_rates')

@@ -13,6 +13,7 @@ import { Panel } from "@/components/terminal/Panel";
 import { FilterBar } from "@/components/terminal/FilterBar";
 
 export default function DashboardPage() {
+  const liveStatuses = new Set(["CREATED", "ARMED", "FILLED", "TP1_REACHED"]);
   const queryClient = useQueryClient();
   const [filterDir, setFilterDir] = useState<"ALL" | "LONG" | "SHORT">("ALL");
   const [filterTf, setFilterTf] = useState<string>("ALL");
@@ -22,7 +23,6 @@ export default function DashboardPage() {
   const { data: signals, isLoading, refetch } = useSignals({
     direction: filterDir === "ALL" ? undefined : filterDir,
     timeframe: filterTf === "ALL" ? undefined : filterTf,
-    status: "active",
     min_confidence: 75,
     limit: 40,
   });
@@ -30,7 +30,7 @@ export default function DashboardPage() {
   const { data: scannerStatus } = useScanner();
   const filteredSignals = useMemo(() => {
     const rows = (signals?.signals || []).filter(
-      (s) => String(s.status || "").toLowerCase() === "active"
+      (s) => liveStatuses.has(String(s.status || ""))
     );
     if (!search.trim()) return rows;
     const q = search.trim().toUpperCase();

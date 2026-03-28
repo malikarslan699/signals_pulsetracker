@@ -74,8 +74,8 @@ class Signal(Base):
 
     # Status lifecycle
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="active"
-    )  # active | tp1_hit | tp2_hit | tp3_hit | sl_hit | expired
+        String(20), nullable=False, default="CREATED"
+    )  # CREATED | ARMED | FILLED | TP1_REACHED | TP2_REACHED | STOPPED | EXPIRED | INVALIDATED
 
     # JSON analytics fields
     score_breakdown: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

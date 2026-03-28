@@ -167,35 +167,7 @@ class RedisClient:
             data = await self.get_signal(symbol)
             if data:
                 signals.append(data)
-        if signals:
-            return signals
-
-        # Backward compatibility: legacy workers used a different sorted-set key
-        # and stored full JSON payloads as members.
-        legacy_rows = await self._r.zrevrangebyscore("signals:active", "+inf", "-inf")
-        legacy_signals: list[dict] = []
-        for row in legacy_rows:
-            try:
-                payload = json.loads(row)
-            except Exception:
-                continue
-            if isinstance(payload, dict):
-                legacy_signals.append(payload)
-
-        if legacy_signals:
-            pipe = self._r.pipeline()
-            for payload in legacy_signals:
-                symbol = str(payload.get("symbol", "")).upper()
-                if not symbol:
-                    continue
-                confidence = float(payload.get("confidence", 0) or 0)
-                key = self._SIGNAL_KEY.format(symbol=symbol)
-                pipe.set(key, json.dumps(payload), ex=86400)
-                pipe.zadd(self._ACTIVE_SIGNALS_KEY, {symbol: confidence})
-            pipe.expire(self._ACTIVE_SIGNALS_KEY, 86400)
-            await pipe.execute()
-
-        return legacy_signals
+        return signals
 
     async def remove_signal(self, symbol: str) -> None:
         """Remove a signal from cache and active-signals set."""
@@ -211,18 +183,6 @@ class RedisClient:
                     pipe.delete(self._SIGNAL_BY_ID_KEY.format(signal_id=signal_id))
             except Exception:
                 pass
-        # Clean legacy payload-based zset entries for this symbol.
-        rows = await self._r.zrange("signals:active", 0, -1)
-        for row in rows:
-            try:
-                payload = json.loads(row)
-            except Exception:
-                continue
-            if str(payload.get("symbol", "")).upper() == symbol.upper():
-                pipe.zrem("signals:active", row)
-                signal_id = payload.get("id")
-                if signal_id:
-                    pipe.delete(self._SIGNAL_BY_ID_KEY.format(signal_id=signal_id))
         await pipe.execute()
 
     # ------------------------------------------------------------------

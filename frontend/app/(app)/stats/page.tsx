@@ -79,9 +79,9 @@ export default function StatsPage() {
   cutoff.setDate(cutoff.getDate() - days);
   const filtered = signals.filter((s) => new Date(s.fired_at) >= cutoff);
 
-  const closed = filtered.filter((s) => !["active", "CREATED", "ARMED", "FILLED"].includes(s.status));
-  const wins = closed.filter((s) => s.status.includes("tp")).length;
-  const losses = closed.filter((s) => s.status === "sl_hit" || s.status === "STOPPED").length;
+  const closed = filtered.filter((s) => !["CREATED", "ARMED", "FILLED", "TP1_REACHED"].includes(s.status));
+  const wins = closed.filter((s) => s.status === "TP2_REACHED").length;
+  const losses = closed.filter((s) => s.status === "STOPPED").length;
   const localWinRate = wins + losses > 0 ? (wins / (wins + losses)) * 100 : 0;
 
   const byTimeframe = useMemo(() => {
@@ -109,8 +109,8 @@ export default function StatsPage() {
       const row = map.get(key);
       if (!row) continue;
       row.total += 1;
-      if (s.status.includes("tp")) row.wins += 1;
-      if (s.status === "sl_hit" || s.status === "STOPPED") row.losses += 1;
+      if (s.status === "TP2_REACHED") row.wins += 1;
+      if (s.status === "STOPPED") row.losses += 1;
     }
     return Array.from(map.values());
   }, [filtered]);

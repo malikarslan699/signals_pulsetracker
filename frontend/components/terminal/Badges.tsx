@@ -26,13 +26,6 @@ export function StatusBadge({
   className,
 }: BadgeProps & {
   status:
-    | "active"
-    | "tp1_hit"
-    | "tp2_hit"
-    | "tp3_hit"
-    | "sl_hit"
-    | "expired"
-    | "invalidated"
     | "CREATED"
     | "ARMED"
     | "FILLED"
@@ -43,20 +36,13 @@ export function StatusBadge({
     | "INVALIDATED";
 }) {
   const styles = {
-    active: "bg-blue/15 text-blue",
     CREATED: "bg-blue/15 text-blue",
     ARMED: "bg-gold/15 text-gold",
     FILLED: "bg-blue/20 text-blue",
-    tp1_hit: "bg-long/15 text-long",
-    tp2_hit: "bg-long/15 text-long",
-    tp3_hit: "bg-long/15 text-long",
-    TP1_REACHED: "bg-long/15 text-long",
+    TP1_REACHED: "bg-gold/15 text-gold",
     TP2_REACHED: "bg-long/15 text-long",
-    sl_hit: "bg-short/15 text-short",
     STOPPED: "bg-short/15 text-short",
-    expired: "bg-surface-2 text-text-muted",
     EXPIRED: "bg-surface-2 text-text-muted",
-    invalidated: "bg-surface-2 text-text-muted",
     INVALIDATED: "bg-surface-2 text-text-muted",
   } as const;
 

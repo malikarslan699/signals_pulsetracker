@@ -703,10 +703,6 @@ async def _store_signal(signal) -> bool:
 
         # Add to active signals sorted set (score = ranking score / calibrated quality)
         active_score = float(getattr(signal, 'ranking_score', None) or signal.confidence or 0)
-        r.zadd('signals:active', {signal_payload: active_score})
-        r.expire('signals:active', 86400)
-
-        # New canonical cache keys used by API (/signals/live etc).
         r.set(f'signal:{signal.symbol}', signal_payload, ex=86400)
         r.zadd('active_signals', {signal.symbol: active_score})
         r.expire('active_signals', 86400)
@@ -856,29 +852,50 @@ def update_signal_statuses():
     Advance lifecycle for open signals.
     """
     try:
-        import redis, json
+        import redis
         import httpx
+        from sqlalchemy import create_engine, text
+
+        from app.services.signal_lifecycle import OPEN_STATUS_SQL, canonicalize_status, is_final_status
+        from engine.data_fetcher import ForexDataFetcher
 
         r = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+        active_symbols = r.zrange('active_signals', 0, -1)
+        price_cache: dict[tuple[str, str], float] = {}
+        forex_fetcher = ForexDataFetcher() if _has_twelvedata_key() else None
+        db_url = os.getenv('DATABASE_URL', '').replace('+asyncpg', '')
+        engine = create_engine(db_url) if db_url else None
 
-        # Get all active signals from Redis
-        active_raw = r.zrange('signals:active', 0, -1)
-
-        for raw in active_raw:
+        for symbol in active_symbols:
             try:
+                raw = r.get(f'signal:{symbol}')
+                if not raw:
+                    r.zrem('active_signals', symbol)
+                    continue
                 signal = json.loads(raw)
                 symbol = signal.get('symbol')
+                market = str(signal.get('market') or 'crypto').lower()
 
                 # Get current price
-                try:
-                    response = httpx.get(
-                        f"https://fapi.binance.com/fapi/v1/ticker/price",
-                        params={'symbol': symbol},
-                        timeout=5
-                    )
-                    current_price = float(response.json().get('price', 0))
-                except Exception:
-                    continue
+                cache_key = (market, symbol)
+                if cache_key not in price_cache:
+                    try:
+                        if market == 'crypto':
+                            response = httpx.get(
+                                "https://fapi.binance.com/fapi/v1/ticker/price",
+                                params={'symbol': symbol},
+                                timeout=5,
+                            )
+                            price_cache[cache_key] = float(response.json().get('price', 0))
+                        elif market == 'forex' and forex_fetcher is not None:
+                            candles = _run_async(forex_fetcher.get_candles(symbol, '1m', limit=1))
+                            latest = candles[-1] if candles else None
+                            price_cache[cache_key] = float(getattr(latest, 'close', 0) or 0)
+                        else:
+                            price_cache[cache_key] = 0.0
+                    except Exception:
+                        price_cache[cache_key] = 0.0
+                current_price = price_cache[cache_key]
 
                 if current_price <= 0:
                     continue
@@ -891,9 +908,10 @@ def update_signal_statuses():
                 sl = float(signal.get('stop_loss', 0))
                 tp1 = float(signal.get('take_profit_1', 0))
                 tp2 = float(signal.get('take_profit_2', tp1))
-                status_now = str(signal.get('status') or 'CREATED')
+                status_now = canonicalize_status(signal.get('status') or 'CREATED')
 
                 new_status = None
+                exit_price = None
                 is_in_zone = zone_low > 0 and zone_high >= zone_low and zone_low <= current_price <= zone_high
                 zone_width = max(abs(zone_high - zone_low), abs(entry - sl) * 0.25, entry * 0.0005 if entry else 0)
                 near_zone = zone_low > 0 and (zone_low - zone_width) <= current_price <= (zone_high + zone_width)
@@ -916,19 +934,40 @@ def update_signal_statuses():
                         new_status = 'FILLED'
                 elif status_now == 'FILLED':
                     if direction == 'LONG':
-                        if current_price >= tp2:
+                        if tp2 > 0 and current_price >= tp2:
                             new_status = 'TP2_REACHED'
-                        elif current_price >= tp1:
+                            exit_price = tp2
+                        elif tp1 > 0 and current_price >= tp1:
                             new_status = 'TP1_REACHED'
-                        elif current_price <= sl:
+                            exit_price = tp1
+                        elif sl > 0 and current_price <= sl:
                             new_status = 'STOPPED'
+                            exit_price = sl
                     elif direction == 'SHORT':
-                        if current_price <= tp2:
+                        if tp2 > 0 and current_price <= tp2:
                             new_status = 'TP2_REACHED'
-                        elif current_price <= tp1:
+                            exit_price = tp2
+                        elif tp1 > 0 and current_price <= tp1:
                             new_status = 'TP1_REACHED'
-                        elif current_price >= sl:
+                            exit_price = tp1
+                        elif sl > 0 and current_price >= sl:
                             new_status = 'STOPPED'
+                            exit_price = sl
+                elif status_now == 'TP1_REACHED':
+                    if direction == 'LONG':
+                        if tp2 > 0 and current_price >= tp2:
+                            new_status = 'TP2_REACHED'
+                            exit_price = tp2
+                        elif sl > 0 and current_price <= sl:
+                            new_status = 'STOPPED'
+                            exit_price = sl
+                    elif direction == 'SHORT':
+                        if tp2 > 0 and current_price <= tp2:
+                            new_status = 'TP2_REACHED'
+                            exit_price = tp2
+                        elif sl > 0 and current_price >= sl:
+                            new_status = 'STOPPED'
+                            exit_price = sl
 
                 # ── Expiry check ────────────────────────────────────────
                 if not new_status:
@@ -950,37 +989,53 @@ def update_signal_statuses():
                 if new_status:
                     # Update in DB
                     try:
-                        from sqlalchemy import create_engine, text
-                        db_url = os.getenv('DATABASE_URL', '').replace('+asyncpg', '')
-                        if db_url:
-                            engine = create_engine(db_url)
+                        if engine:
                             with engine.connect() as conn:
-                                is_terminal = new_status in {'TP1_REACHED', 'TP2_REACHED', 'STOPPED', 'EXPIRED', 'INVALIDATED'}
-                                if not is_terminal:
-                                    conn.execute(text("""
+                                pnl = None
+                                if exit_price is not None and entry > 0:
+                                    pnl = (
+                                        ((exit_price - entry) / entry * 100)
+                                        if direction == 'LONG'
+                                        else ((entry - exit_price) / entry * 100)
+                                    )
+                                if new_status == 'TP1_REACHED':
+                                    conn.execute(text(f"""
                                         UPDATE signals
-                                        SET status = :status
-                                        WHERE id = :id AND status IN ('CREATED', 'ARMED', 'FILLED', 'active')
-                                    """), {'status': new_status, 'id': signal.get('id')})
+                                        SET status = :status,
+                                            close_price = :price,
+                                            pnl_pct = :pnl
+                                        WHERE id = :id AND status IN {OPEN_STATUS_SQL}
+                                    """),
+                                    {'status': new_status, 'price': exit_price,
+                                     'pnl': round(pnl, 4) if pnl is not None else None,
+                                     'id': signal.get('id')})
                                 elif new_status == 'EXPIRED':
-                                    conn.execute(text("""
+                                    conn.execute(text(f"""
                                         UPDATE signals
                                         SET status = 'EXPIRED', closed_at = NOW()
-                                        WHERE id = :id AND status IN ('CREATED', 'ARMED', 'FILLED', 'active')
-                                    """), {'id': signal.get('id')})
+                                        WHERE id = :id AND status IN {OPEN_STATUS_SQL}
+                                    """),
+                                    {'id': signal.get('id')})
+                                elif new_status == 'INVALIDATED':
+                                    conn.execute(text(f"""
+                                        UPDATE signals
+                                        SET status = 'INVALIDATED', closed_at = NOW()
+                                        WHERE id = :id AND status IN {OPEN_STATUS_SQL}
+                                    """),
+                                    {'id': signal.get('id')})
                                 else:
-                                    pnl = ((current_price - entry) / entry * 100) if direction == 'LONG' else ((entry - current_price) / entry * 100)
-                                    conn.execute(text("""
+                                    conn.execute(text(f"""
                                         UPDATE signals
                                         SET status = :status, close_price = :price,
                                             pnl_pct = :pnl, closed_at = NOW()
-                                        WHERE id = :id AND status IN ('CREATED', 'ARMED', 'FILLED', 'active')
-                                    """), {'status': new_status, 'price': current_price,
-                                           'pnl': round(pnl, 2), 'id': signal.get('id')})
+                                        WHERE id = :id AND status IN {OPEN_STATUS_SQL}
+                                    """),
+                                    {'status': new_status, 'price': exit_price,
+                                     'pnl': round(pnl, 4) if pnl is not None else None,
+                                     'id': signal.get('id')})
                                 conn.commit()
 
-                        if new_status in {'TP1_REACHED', 'TP2_REACHED', 'STOPPED', 'EXPIRED', 'INVALIDATED'}:
-                            r.zrem('signals:active', raw)
+                        if is_final_status(new_status):
                             r.zrem('active_signals', symbol)
                             r.delete(f'signal:{symbol}')
                             signal_id = signal.get('id')
@@ -989,18 +1044,31 @@ def update_signal_statuses():
                             r.delete(_open_signal_key(symbol, direction, signal.get('timeframe', '')))
                         else:
                             signal['status'] = new_status
+                            if exit_price is not None:
+                                signal['close_price'] = exit_price
+                                if entry > 0:
+                                    signal['pnl_pct'] = round(
+                                        ((exit_price - entry) / entry * 100)
+                                        if direction == 'LONG'
+                                        else ((entry - exit_price) / entry * 100),
+                                        4,
+                                    )
                             refreshed = json.dumps(signal)
-                            r.zrem('signals:active', raw)
-                            r.zadd('signals:active', {refreshed: signal.get('confidence', 0)})
                             r.set(f'signal:{symbol}', refreshed, ex=86400)
                             r.set(f'signal:id:{signal.get("id")}', refreshed, ex=86400)
 
-                        logger.info(f"Signal {signal.get('id')} -> {new_status} at {current_price}")
+                        logger.info(f"Signal {signal.get('id')} -> {new_status} at {exit_price or current_price}")
                     except Exception as e:
                         logger.error(f"Status update DB error: {e}")
 
             except Exception as e:
                 logger.warning(f"Status check error: {e}")
+
+        if forex_fetcher is not None:
+            try:
+                _run_async(forex_fetcher.close())
+            except Exception:
+                pass
 
     except Exception as e:
         logger.error(f"update_signal_statuses error: {e}")

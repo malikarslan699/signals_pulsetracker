@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from loguru import logger
 
 from workers.celery_app import app
+from app.services.signal_lifecycle import OPEN_STATUS_SQL, canonicalize_status
+from workers.scanner_task import _has_twelvedata_key, _run_async
 
 
 def _open_signal_key(symbol: str, direction: str, timeframe: str) -> str:
@@ -34,32 +36,40 @@ def revalidate_active_signals():
     try:
         import redis as redis_lib
         import httpx
+        from engine.data_fetcher import ForexDataFetcher
 
         r = redis_lib.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
-        active_raw = r.zrange('signals:active', 0, -1)
+        active_symbols = r.zrange('active_signals', 0, -1)
 
-        if not active_raw:
+        if not active_symbols:
             return {'checked': 0, 'invalidated': 0}
 
         checked = 0
         invalidated = 0
-        price_cache: dict[str, float] = {}
+        price_cache: dict[tuple[str, str], float] = {}
+        forex_fetcher = ForexDataFetcher() if _has_twelvedata_key() else None
 
-        for raw in active_raw:
+        for symbol in active_symbols:
             try:
+                raw = r.get(f'signal:{symbol}')
+                if not raw:
+                    r.zrem('active_signals', symbol)
+                    continue
                 signal = json.loads(raw)
                 symbol = signal.get('symbol', '')
                 market = signal.get('market', 'crypto')
                 direction = signal.get('direction', 'LONG')
+                status = canonicalize_status(signal.get('status'))
                 entry = float(signal.get('entry', 0))
                 sl = float(signal.get('stop_loss', 0))
                 tp1 = float(signal.get('take_profit_1', 0))
 
-                if not symbol or entry <= 0 or sl <= 0:
+                if not symbol or entry <= 0 or sl <= 0 or status not in {'CREATED', 'ARMED', 'FILLED', 'TP1_REACHED'}:
                     continue
 
                 # ── Get current price ────────────────────────────────────────
-                if symbol not in price_cache:
+                cache_key = (str(market).lower(), symbol)
+                if cache_key not in price_cache:
                     try:
                         if market == 'crypto':
                             resp = httpx.get(
@@ -67,14 +77,17 @@ def revalidate_active_signals():
                                 params={"symbol": symbol},
                                 timeout=5,
                             )
-                            price_cache[symbol] = float(resp.json().get("price", 0))
+                            price_cache[cache_key] = float(resp.json().get("price", 0))
+                        elif str(market).lower() == 'forex' and forex_fetcher is not None:
+                            candles = _run_async(forex_fetcher.get_candles(symbol, '1m', limit=1))
+                            latest = candles[-1] if candles else None
+                            price_cache[cache_key] = float(getattr(latest, 'close', 0) or 0)
                         else:
-                            # Forex: skip revalidation (no free real-time price endpoint)
-                            price_cache[symbol] = 0.0
+                            price_cache[cache_key] = 0.0
                     except Exception:
-                        price_cache[symbol] = 0.0
+                        price_cache[cache_key] = 0.0
 
-                current_price = price_cache[symbol]
+                current_price = price_cache[cache_key]
                 if current_price <= 0:
                     continue
 
@@ -108,11 +121,17 @@ def revalidate_active_signals():
                     )
 
                 if invalidation_reason:
-                    _invalidate_signal(r, signal, raw, invalidation_reason)
+                    _invalidate_signal(r, signal, invalidation_reason)
                     invalidated += 1
 
             except Exception as e:
                 logger.warning(f"[REVALIDATION] Error checking signal: {e}")
+
+        if forex_fetcher is not None:
+            try:
+                _run_async(forex_fetcher.close())
+            except Exception:
+                pass
 
         logger.info(f"[REVALIDATION] Checked {checked} signals, invalidated {invalidated}")
         return {'checked': checked, 'invalidated': invalidated}
@@ -122,15 +141,16 @@ def revalidate_active_signals():
         return {'error': str(e)}
 
 
-def _invalidate_signal(r, signal: dict, raw_bytes, reason: str):
+def _invalidate_signal(r, signal: dict, reason: str):
     """Mark signal as invalidated in Redis and DB."""
     signal_id = signal.get('id')
 
     # Remove from Redis active sets
     try:
-        r.zrem('signals:active', raw_bytes)
         r.zrem('active_signals', signal.get('symbol', ''))
         r.delete(f"signal:{signal.get('symbol', '')}")
+        if signal_id:
+            r.delete(f"signal:id:{signal_id}")
     except Exception as e:
         logger.warning(f"[REVALIDATION] Redis cleanup error: {e}")
 
@@ -141,11 +161,11 @@ def _invalidate_signal(r, signal: dict, raw_bytes, reason: str):
         if db_url and signal_id:
             engine = create_engine(db_url)
             with engine.connect() as conn:
-                conn.execute(text("""
+                conn.execute(text(f"""
                     UPDATE signals
                     SET status = 'INVALIDATED',
                         closed_at = NOW()
-                    WHERE id = :id AND status IN ('CREATED', 'ARMED', 'FILLED', 'active')
+                    WHERE id = :id AND status IN {OPEN_STATUS_SQL}
                 """), {"id": signal_id})
                 conn.commit()
     except Exception as e:

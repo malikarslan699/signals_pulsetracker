@@ -49,6 +49,7 @@ export function TradingViewChart({
   const chartRef = useRef<any>(null);
   const seriesRefs = useRef<any[]>([]);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [isDarkTheme, setIsDarkTheme] = useState(false);
 
   const { data: candles, isLoading, isError, error, refetch } = useQuery<Candle[]>({
     queryKey: ["candles", symbol, timeframe],
@@ -77,6 +78,15 @@ export function TradingViewChart({
   );
 
   useEffect(() => {
+    const root = document.documentElement;
+    const syncTheme = () => setIsDarkTheme(root.classList.contains("dark"));
+    syncTheme();
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     if (!containerRef.current) return;
     if (!sortedCandles.length) return;
 
@@ -96,24 +106,44 @@ export function TradingViewChart({
           seriesRefs.current = [];
         }
 
+        const theme = isDarkTheme
+          ? {
+              background: "#0E1726",
+              text: "#94A3B8",
+              grid: "#1E293B",
+              border: "#374151",
+              crosshair: "#334155",
+              zone: "rgba(245, 158, 11, 0.45)",
+              invalidation: "rgba(239, 68, 68, 0.55)",
+            }
+          : {
+              background: "#FFFFFF",
+              text: "#475569",
+              grid: "#E2E8F0",
+              border: "#CBD5E1",
+              crosshair: "#94A3B8",
+              zone: "rgba(245, 158, 11, 0.35)",
+              invalidation: "rgba(239, 68, 68, 0.4)",
+            };
+
         chart = createChart(containerRef.current!, {
           layout: {
-            background: { type: ColorType.Solid, color: "#0E1726" },
-            textColor: "#94A3B8",
+            background: { type: ColorType.Solid, color: theme.background },
+            textColor: theme.text,
           },
           grid: {
-            vertLines: { color: "#1E293B" },
-            horzLines: { color: "#1E293B" },
+            vertLines: { color: theme.grid },
+            horzLines: { color: theme.grid },
           },
           crosshair: {
-            vertLine: { color: "#334155" },
-            horzLine: { color: "#334155" },
+            vertLine: { color: theme.crosshair },
+            horzLine: { color: theme.crosshair },
           },
           rightPriceScale: {
-            borderColor: "#374151",
+            borderColor: theme.border,
           },
           timeScale: {
-            borderColor: "#374151",
+            borderColor: theme.border,
             timeVisible: true,
             secondsVisible: false,
           },
@@ -143,7 +173,7 @@ export function TradingViewChart({
 
           if (signal.entry_zone_low != null && signal.entry_zone_high != null) {
             const zoneLowSeries = chart.addLineSeries({
-              color: "rgba(245, 158, 11, 0.45)",
+              color: theme.zone,
               lineWidth: 1,
               lineStyle,
               title: "Zone Low",
@@ -156,7 +186,7 @@ export function TradingViewChart({
             seriesRefs.current.push(zoneLowSeries);
 
             const zoneHighSeries = chart.addLineSeries({
-              color: "rgba(245, 158, 11, 0.45)",
+              color: theme.zone,
               lineWidth: 1,
               lineStyle,
               title: "Zone High",
@@ -199,7 +229,7 @@ export function TradingViewChart({
 
           if (signal.invalidation_price != null) {
             const invalidationSeries = chart.addLineSeries({
-              color: "rgba(239, 68, 68, 0.55)",
+              color: theme.invalidation,
               lineWidth: 1,
               lineStyle: LineStyle.Dotted,
               title: "Invalidation",
@@ -267,7 +297,7 @@ export function TradingViewChart({
         seriesRefs.current = [];
       }
     };
-  }, [sortedCandles, signal, height]);
+  }, [sortedCandles, signal, height, isDarkTheme]);
 
   if (isLoading) {
     return (

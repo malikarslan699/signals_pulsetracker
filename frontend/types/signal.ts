@@ -31,13 +31,6 @@ export interface Signal {
   raw_score?: number;
   max_possible_score?: number;
   status:
-    | "active"
-    | "tp1_hit"
-    | "tp2_hit"
-    | "tp3_hit"
-    | "sl_hit"
-    | "expired"
-    | "invalidated"
     | "CREATED"
     | "ARMED"
     | "FILLED"
@@ -67,6 +60,8 @@ export interface Signal {
   fired_at: string;
   valid_until?: string;
   expires_at?: string;
+  closed_at?: string;
+  close_price?: number;
   pnl_pct?: number;
 }
 

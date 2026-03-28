@@ -207,16 +207,24 @@ async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Get signals from Redis
     try:
-        active_raw = r.zrevrange("signals:active", 0, 4, withscores=True)
+        active_symbols = r.zrevrange("active_signals", 0, 4, withscores=True)
 
-        if not active_raw:
+        if not active_symbols:
             await update.message.reply_text("No active signals right now. Check back soon!")
             return
 
         msg = "📊 <b>Latest Signals — PulseSignal Pro</b>\n\n"
 
-        for raw, score in active_raw:
+        for symbol_raw, score in active_symbols:
             try:
+                symbol_key = (
+                    symbol_raw.decode("utf-8", errors="ignore")
+                    if isinstance(symbol_raw, (bytes, bytearray))
+                    else str(symbol_raw)
+                )
+                raw = r.get(f"signal:{symbol_key}")
+                if not raw:
+                    continue
                 sig = json.loads(raw)
                 direction = sig.get("direction", "")
                 symbol = sig.get("symbol", "")

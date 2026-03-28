@@ -16,6 +16,15 @@ from app.core.auth import get_current_active_user, require_role
 from app.database import get_db
 from app.models.user import User
 from app.services.pair_health_service import classify_pair_health
+from app.services.signal_lifecycle import (
+    LOSS_STATUS_SQL,
+    OPEN_STATUS_SQL,
+    STALE_STATUS_SQL,
+    WIN_STATUS_SQL,
+    canonicalize_status,
+    is_loss_status,
+    is_win_status,
+)
 
 
 def _parse_score_breakdown(value) -> dict:
@@ -175,13 +184,13 @@ async def qa_stats(
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     # Overall counts
-    overall = await db.execute(text("""
+    overall = await db.execute(text(f"""
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as wins,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as losses,
-            COUNT(*) FILTER (WHERE status = 'expired') as expired,
-            COUNT(*) FILTER (WHERE status = 'active') as active,
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as losses,
+            COUNT(*) FILTER (WHERE status IN {STALE_STATUS_SQL}) as expired,
+            COUNT(*) FILTER (WHERE status IN {OPEN_STATUS_SQL}) as active,
             ROUND(AVG(confidence)::numeric, 1) as avg_confidence,
             ROUND(AVG(rr_ratio)::numeric, 2) as avg_rr
         FROM signals
@@ -190,38 +199,38 @@ async def qa_stats(
     ov = overall.mappings().first() or {}
 
     # By timeframe
-    by_tf = await db.execute(text("""
+    by_tf = await db.execute(text(f"""
         SELECT timeframe,
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as wins,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as losses,
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as losses,
             ROUND(AVG(confidence)::numeric,1) as avg_confidence
         FROM signals WHERE fired_at >= :cutoff
         GROUP BY timeframe ORDER BY total DESC
     """), {"cutoff": cutoff})
 
     # By market
-    by_market = await db.execute(text("""
+    by_market = await db.execute(text(f"""
         SELECT market,
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as wins,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as losses
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as losses
         FROM signals WHERE fired_at >= :cutoff
         GROUP BY market
     """), {"cutoff": cutoff})
 
     # Noisy pairs (most signals generated)
-    noisy_pairs = await db.execute(text("""
+    noisy_pairs = await db.execute(text(f"""
         SELECT symbol, COUNT(*) as signal_count,
             ROUND(AVG(confidence)::numeric,1) as avg_confidence,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as wins,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as losses
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as losses
         FROM signals WHERE fired_at >= :cutoff
         GROUP BY symbol ORDER BY signal_count DESC LIMIT 15
     """), {"cutoff": cutoff})
 
     # Confidence band distribution
-    bands = await db.execute(text("""
+    bands = await db.execute(text(f"""
         SELECT
             CASE
                 WHEN confidence >= 90 THEN 'ULTRA_HIGH (90+)'
@@ -231,29 +240,29 @@ async def qa_stats(
                 ELSE 'BELOW_THRESHOLD (<65)'
             END as band,
             COUNT(*) as count,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as wins,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as losses
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as losses
         FROM signals WHERE fired_at >= :cutoff
         GROUP BY band ORDER BY band
     """), {"cutoff": cutoff})
 
     # Direction breakdown
-    by_dir = await db.execute(text("""
+    by_dir = await db.execute(text(f"""
         SELECT direction,
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as wins,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as losses,
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as losses,
             ROUND(AVG(pnl_pct)::numeric, 2) as avg_pnl
         FROM signals WHERE fired_at >= :cutoff
         GROUP BY direction
     """), {"cutoff": cutoff})
 
-    confidence_deciles_rows = await db.execute(text("""
+    confidence_deciles_rows = await db.execute(text(f"""
         SELECT
             CONCAT((FLOOR(confidence / 10.0) * 10)::int, '-', (FLOOR(confidence / 10.0) * 10 + 9)::int) AS decile,
             COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit','TP1_REACHED','TP2_REACHED')) AS wins,
-            COUNT(*) FILTER (WHERE status IN ('sl_hit','STOPPED')) AS losses,
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) AS wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) AS losses,
             ROUND(AVG(pwin_tp1)::numeric, 1) AS avg_pwin_tp1,
             ROUND(AVG(pwin_tp2)::numeric, 1) AS avg_pwin_tp2
         FROM signals
@@ -263,12 +272,12 @@ async def qa_stats(
         ORDER BY FLOOR(confidence / 10.0)
     """), {"cutoff": cutoff})
 
-    indicator_rows = await db.execute(text("""
+    indicator_rows = await db.execute(text(f"""
         SELECT score_breakdown, status
         FROM signals
         WHERE fired_at >= :cutoff
           AND score_breakdown IS NOT NULL
-          AND status NOT IN ('active','CREATED','ARMED','FILLED')
+          AND status NOT IN {OPEN_STATUS_SQL}
         LIMIT 500
     """), {"cutoff": cutoff})
 
@@ -276,8 +285,8 @@ async def qa_stats(
     for row in indicator_rows.mappings():
         sb = _parse_score_breakdown(row["score_breakdown"])
         triggered = _triggered_indicator_keys(sb)
-        is_win = str(row["status"]) in {'tp1_hit', 'tp2_hit', 'tp3_hit', 'TP1_REACHED', 'TP2_REACHED'}
-        is_loss = str(row["status"]) in {'sl_hit', 'STOPPED'}
+        is_win = is_win_status(row["status"])
+        is_loss = is_loss_status(row["status"])
         for key in triggered:
             current = indicator_perf.setdefault(key, {"indicator": key, "count": 0, "wins": 0, "losses": 0})
             current["count"] += 1
@@ -302,7 +311,7 @@ async def qa_stats(
         reverse=True,
     )
 
-    pair_rows = await db.execute(text("""
+    pair_rows = await db.execute(text(f"""
         SELECT
             p.symbol,
             p.market,
@@ -311,9 +320,9 @@ async def qa_stats(
             p.health_score,
             p.health_status,
             p.disable_reason,
-            COUNT(s.id) FILTER (WHERE s.status NOT IN ('active','CREATED','ARMED','FILLED')) AS total_closed,
-            COUNT(s.id) FILTER (WHERE s.status IN ('tp1_hit','tp2_hit','tp3_hit','TP1_REACHED','TP2_REACHED')) AS wins,
-            COUNT(s.id) FILTER (WHERE s.status IN ('sl_hit','STOPPED')) AS losses,
+            COUNT(s.id) FILTER (WHERE s.status NOT IN {OPEN_STATUS_SQL}) AS total_closed,
+            COUNT(s.id) FILTER (WHERE s.status IN {WIN_STATUS_SQL}) AS wins,
+            COUNT(s.id) FILTER (WHERE s.status IN {LOSS_STATUS_SQL}) AS losses,
             ROUND(AVG(s.pwin_tp1)::numeric, 1) AS avg_pwin_tp1,
             ROUND(AVG(s.pnl_pct)::numeric, 2) AS avg_pnl
         FROM pairs p
@@ -511,13 +520,13 @@ async def false_positives(
     """Identify fast failures — signals that hit SL or expired within a short window."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    rows = await db.execute(text("""
+    rows = await db.execute(text(f"""
         SELECT symbol, market, direction, timeframe, confidence, status,
                pnl_pct, fired_at, closed_at,
                EXTRACT(EPOCH FROM (closed_at - fired_at))/3600 as hours_to_close
         FROM signals
         WHERE fired_at >= :cutoff
-          AND status IN ('sl_hit', 'expired')
+          AND (status IN {LOSS_STATUS_SQL} OR status IN {STALE_STATUS_SQL})
           AND closed_at IS NOT NULL
           AND EXTRACT(EPOCH FROM (closed_at - fired_at))/3600 <= :max_hours
         ORDER BY hours_to_close ASC
@@ -546,19 +555,19 @@ async def indicator_performance(
 
     # We count signal outcomes grouped by confidence band and timeframe
     # as a proxy for indicator performance (score_breakdown parsing is done in Python)
-    rows = await db.execute(text("""
+    rows = await db.execute(text(f"""
         SELECT
             timeframe,
             CASE WHEN confidence >= 85 THEN 'HIGH' ELSE 'MEDIUM' END as conf_band,
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as wins,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as losses,
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as wins,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as losses,
             ROUND(AVG(confidence)::numeric, 1) as avg_confidence,
-            ROUND(AVG(CASE WHEN status IN ('tp1_hit','tp2_hit','tp3_hit') THEN pnl_pct END)::numeric, 2) as avg_win_pnl,
-            ROUND(AVG(CASE WHEN status = 'sl_hit' THEN pnl_pct END)::numeric, 2) as avg_loss_pnl
+            ROUND(AVG(CASE WHEN status IN {WIN_STATUS_SQL} THEN pnl_pct END)::numeric, 2) as avg_win_pnl,
+            ROUND(AVG(CASE WHEN status IN {LOSS_STATUS_SQL} THEN pnl_pct END)::numeric, 2) as avg_loss_pnl
         FROM signals
         WHERE fired_at >= :cutoff
-          AND status != 'active'
+          AND status NOT IN {OPEN_STATUS_SQL}
         GROUP BY timeframe, conf_band
         ORDER BY timeframe, conf_band
     """), {"cutoff": cutoff})
@@ -590,7 +599,7 @@ async def failure_analysis(
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     # SL hit stats by pair
-    sl_by_pair = await db.execute(text("""
+    sl_by_pair = await db.execute(text(f"""
         SELECT symbol, market, direction,
             COUNT(*) as sl_count,
             ROUND(AVG(confidence)::numeric, 1) as avg_confidence_at_loss,
@@ -599,7 +608,7 @@ async def failure_analysis(
             MIN(EXTRACT(EPOCH FROM (closed_at - fired_at))/60)::int as fastest_sl_min
         FROM signals
         WHERE fired_at >= :cutoff
-          AND status = 'sl_hit'
+          AND status IN {LOSS_STATUS_SQL}
           AND closed_at IS NOT NULL
         GROUP BY symbol, market, direction
         ORDER BY sl_count DESC
@@ -607,28 +616,28 @@ async def failure_analysis(
     """), {"cutoff": cutoff})
 
     # SL hit stats by timeframe
-    sl_by_tf = await db.execute(text("""
+    sl_by_tf = await db.execute(text(f"""
         SELECT timeframe,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as sl_hits,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as tp_hits,
-            ROUND(AVG(confidence) FILTER (WHERE status = 'sl_hit')::numeric, 1) as avg_conf_loss,
-            ROUND(AVG(confidence) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit'))::numeric, 1) as avg_conf_win,
-            ROUND(AVG(rr_ratio) FILTER (WHERE status = 'sl_hit')::numeric, 2) as avg_rr_loss,
-            ROUND(AVG(rr_ratio) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit'))::numeric, 2) as avg_rr_win
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as sl_hits,
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as tp_hits,
+            ROUND(AVG(confidence) FILTER (WHERE status IN {LOSS_STATUS_SQL})::numeric, 1) as avg_conf_loss,
+            ROUND(AVG(confidence) FILTER (WHERE status IN {WIN_STATUS_SQL})::numeric, 1) as avg_conf_win,
+            ROUND(AVG(rr_ratio) FILTER (WHERE status IN {LOSS_STATUS_SQL})::numeric, 2) as avg_rr_loss,
+            ROUND(AVG(rr_ratio) FILTER (WHERE status IN {WIN_STATUS_SQL})::numeric, 2) as avg_rr_win
         FROM signals
-        WHERE fired_at >= :cutoff AND status != 'active'
+        WHERE fired_at >= :cutoff AND status NOT IN {OPEN_STATUS_SQL}
         GROUP BY timeframe
         ORDER BY sl_hits DESC
     """), {"cutoff": cutoff})
 
     # Overconfidence check: signals with high confidence that still hit SL
-    overconfident_losses = await db.execute(text("""
+    overconfident_losses = await db.execute(text(f"""
         SELECT symbol, direction, timeframe, confidence, rr_ratio, pnl_pct,
                fired_at, closed_at,
                EXTRACT(EPOCH FROM (closed_at - fired_at))/3600 as hours_held
         FROM signals
         WHERE fired_at >= :cutoff
-          AND status = 'sl_hit'
+          AND status IN {LOSS_STATUS_SQL}
           AND confidence >= 85
           AND closed_at IS NOT NULL
         ORDER BY confidence DESC
@@ -636,32 +645,32 @@ async def failure_analysis(
     """), {"cutoff": cutoff})
 
     # Direction failure bias
-    dir_bias = await db.execute(text("""
+    dir_bias = await db.execute(text(f"""
         SELECT direction,
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'sl_hit') as sl_hits,
-            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit')) as tp_hits,
+            COUNT(*) FILTER (WHERE status IN {LOSS_STATUS_SQL}) as sl_hits,
+            COUNT(*) FILTER (WHERE status IN {WIN_STATUS_SQL}) as tp_hits,
             ROUND(AVG(confidence)::numeric, 1) as avg_confidence
         FROM signals
-        WHERE fired_at >= :cutoff AND status NOT IN ('active','expired')
+        WHERE fired_at >= :cutoff AND (status IN {LOSS_STATUS_SQL} OR status IN {WIN_STATUS_SQL})
         GROUP BY direction
     """), {"cutoff": cutoff})
 
     # Signals with score_breakdown — extract which indicators were present in losses
-    sl_signals_raw = await db.execute(text("""
+    sl_signals_raw = await db.execute(text(f"""
         SELECT score_breakdown
         FROM signals
         WHERE fired_at >= :cutoff
-          AND status = 'sl_hit'
+          AND status IN {LOSS_STATUS_SQL}
           AND score_breakdown IS NOT NULL
         LIMIT 100
     """), {"cutoff": cutoff})
 
-    tp_signals_raw = await db.execute(text("""
+    tp_signals_raw = await db.execute(text(f"""
         SELECT score_breakdown
         FROM signals
         WHERE fired_at >= :cutoff
-          AND status IN ('tp1_hit','tp2_hit','tp3_hit')
+          AND status IN {WIN_STATUS_SQL}
           AND score_breakdown IS NOT NULL
         LIMIT 100
     """), {"cutoff": cutoff})

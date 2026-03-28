@@ -88,8 +88,14 @@ function SignalQARow({ signal }: { signal: QASignal }) {
   const qa = signal.qa;
 
   const statusColors: Record<string, string> = {
-    active: "text-blue-400", tp1_hit: "text-emerald-400", tp2_hit: "text-emerald-500",
-    tp3_hit: "text-emerald-600", sl_hit: "text-red-400", expired: "text-gray-400",
+    CREATED: "text-blue-400",
+    ARMED: "text-amber-400",
+    FILLED: "text-blue-500",
+    TP1_REACHED: "text-amber-500",
+    TP2_REACHED: "text-emerald-500",
+    STOPPED: "text-red-400",
+    EXPIRED: "text-gray-400",
+    INVALIDATED: "text-gray-400",
   };
 
   const tfBadge = (label: string, ok: boolean) => (
@@ -311,7 +317,7 @@ export default function QALabPage() {
         <div className="space-y-4">
           {/* Filters */}
           <div className="flex flex-wrap gap-2">
-            {["ALL", "active", "tp1_hit", "tp2_hit", "sl_hit", "expired"].map((s) => (
+            {["ALL", "CREATED", "ARMED", "FILLED", "TP1_REACHED", "TP2_REACHED", "STOPPED", "EXPIRED", "INVALIDATED"].map((s) => (
               <button key={s} onClick={() => setFilterStatus(s)}
                 className={`px-3 py-1 text-xs rounded-lg border transition-all ${filterStatus === s ? "bg-purple text-white border-purple" : "bg-surface border-border text-text-muted"}`}>
                 {s === "ALL" ? "All Status" : getStatusLabel(s)}

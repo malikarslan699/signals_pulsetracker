@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.services.signal_lifecycle import LEGACY_STATUS_MAP
 
 
 # ---------------------------------------------------------------------------
@@ -203,13 +204,6 @@ class SignalFilter(BaseModel):
     @classmethod
     def validate_status(cls, v: Optional[str]) -> Optional[str]:
         allowed = {
-            "active",
-            "tp1_hit",
-            "tp2_hit",
-            "tp3_hit",
-            "sl_hit",
-            "expired",
-            "invalidated",
             "CREATED",
             "ARMED",
             "FILLED",
@@ -219,6 +213,8 @@ class SignalFilter(BaseModel):
             "EXPIRED",
             "INVALIDATED",
         }
+        if v in LEGACY_STATUS_MAP:
+            return LEGACY_STATUS_MAP[v]
         if v and v not in allowed:
             raise ValueError(f"status must be one of {allowed}")
         return v
@@ -227,7 +223,5 @@ class SignalFilter(BaseModel):
 class SignalStatusUpdate(BaseModel):
     """Payload for updating a signal's lifecycle status."""
 
-    status: str = Field(
-        pattern=r"^(active|tp1_hit|tp2_hit|tp3_hit|sl_hit|expired|invalidated|CREATED|ARMED|FILLED|TP1_REACHED|TP2_REACHED|STOPPED|EXPIRED|INVALIDATED)$"
-    )
+    status: str = Field(pattern=r"^(CREATED|ARMED|FILLED|TP1_REACHED|TP2_REACHED|STOPPED|EXPIRED|INVALIDATED)$")
     close_price: Optional[Decimal] = None
