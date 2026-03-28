@@ -678,6 +678,7 @@ async def _store_signal(signal) -> bool:
             'entry_zone_low': getattr(signal, 'entry_zone_low', None),
             'entry_zone_high': getattr(signal, 'entry_zone_high', None),
             'entry_type': getattr(signal, 'entry_type', None),
+            'entry_trigger': getattr(signal, 'entry_trigger', 'touch'),
             'stop_loss': signal.stop_loss,
             'invalidation_price': getattr(signal, 'invalidation_price', None),
             'take_profit_1': signal.take_profit_1,
@@ -688,10 +689,15 @@ async def _store_signal(signal) -> bool:
             'rr_tp2': getattr(signal, 'rr_tp2', None) or _calc_rr(signal.entry, signal.stop_loss, signal.take_profit_2),
             'confidence_band': signal.confidence_band,
             'top_confluences': signal.top_confluences[:5],
+            'setup_reasons': getattr(signal, 'setup_reasons', signal.top_confluences[:5]),
+            'model_version': getattr(signal, 'model_version', None),
             'status': getattr(signal, 'status', 'CREATED'),
             'fired_at': signal.fired_at,
             'valid_until': getattr(signal, 'valid_until', None),
             'expires_at': getattr(signal, 'expires_at', None),
+            'filled_at': None,
+            'fill_price': None,
+            'close_reason': None,
         }
 
         # Store as latest signal for symbol
@@ -786,19 +792,19 @@ async def _store_signal(signal) -> bool:
                     conn.execute(text("""
                         INSERT INTO signals (
                             id, pair_id, symbol, market, direction, timeframe, confidence,
-                            entry, entry_zone_low, entry_zone_high, entry_type,
+                            entry, entry_zone_low, entry_zone_high, entry_type, entry_trigger,
                             stop_loss, invalidation_price, take_profit_1, take_profit_2, take_profit_3,
                             rr_ratio, raw_score, max_possible_score, status,
                             setup_score, pwin_tp1, pwin_tp2, ranking_score,
-                            score_breakdown, ict_zones, mtf_analysis, candle_snapshot,
+                            score_breakdown, setup_reasons, ict_zones, mtf_analysis, candle_snapshot, model_version,
                             fired_at, valid_until, expires_at, alert_sent
                         ) VALUES (
                             :id, :pair_id, :symbol, :market, :direction, :timeframe, :confidence,
-                            :entry, :entry_zone_low, :entry_zone_high, :entry_type,
+                            :entry, :entry_zone_low, :entry_zone_high, :entry_type, :entry_trigger,
                             :stop_loss, :invalidation_price, :tp1, :tp2, :tp3,
                             :rr, :raw_score, :max_score, :status,
                             :setup_score, :pwin_tp1, :pwin_tp2, :ranking_score,
-                            :breakdown, :ict_zones, :mtf, :snapshot,
+                            :breakdown, :setup_reasons, :ict_zones, :mtf, :snapshot, :model_version,
                             :fired_at, :valid_until, :expires_at, false
                         )
                         ON CONFLICT (id) DO NOTHING
@@ -814,6 +820,7 @@ async def _store_signal(signal) -> bool:
                         'entry_zone_low': getattr(signal, 'entry_zone_low', None),
                         'entry_zone_high': getattr(signal, 'entry_zone_high', None),
                         'entry_type': getattr(signal, 'entry_type', None),
+                        'entry_trigger': getattr(signal, 'entry_trigger', 'touch'),
                         'stop_loss': signal.stop_loss,
                         'invalidation_price': getattr(signal, 'invalidation_price', None),
                         'tp1': signal.take_profit_1,
@@ -828,9 +835,14 @@ async def _store_signal(signal) -> bool:
                         'pwin_tp2': getattr(signal, 'pwin_tp2', None),
                         'ranking_score': getattr(signal, 'ranking_score', None),
                         'breakdown': json_lib.dumps(signal.score_breakdown, default=_json_default),
+                        'setup_reasons': json_lib.dumps(
+                            getattr(signal, 'setup_reasons', signal.top_confluences[:5]),
+                            default=_json_default,
+                        ),
                         'ict_zones': json_lib.dumps(signal.ict_zones, default=_json_default),
                         'mtf': json_lib.dumps(signal.mtf_analysis, default=_json_default),
                         'snapshot': json_lib.dumps(signal.candle_snapshot, default=_json_default),
+                        'model_version': getattr(signal, 'model_version', None),
                         'fired_at': dt.fromisoformat(str(signal.fired_at).replace("Z", "+00:00")),
                         'valid_until': valid_until,
                         'expires_at': expires_at,
@@ -912,6 +924,8 @@ def update_signal_statuses():
 
                 new_status = None
                 exit_price = None
+                fill_price = None
+                close_reason = None
                 is_in_zone = zone_low > 0 and zone_high >= zone_low and zone_low <= current_price <= zone_high
                 zone_width = max(abs(zone_high - zone_low), abs(entry - sl) * 0.25, entry * 0.0005 if entry else 0)
                 near_zone = zone_low > 0 and (zone_low - zone_width) <= current_price <= (zone_high + zone_width)
@@ -919,55 +933,71 @@ def update_signal_statuses():
                 if status_now == 'CREATED':
                     if direction == 'LONG' and invalidation > 0 and current_price < invalidation:
                         new_status = 'INVALIDATED'
+                        close_reason = 'invalidation'
                     elif direction == 'SHORT' and invalidation > 0 and current_price > invalidation:
                         new_status = 'INVALIDATED'
+                        close_reason = 'invalidation'
                     elif is_in_zone:
                         new_status = 'FILLED'
+                        fill_price = current_price
                     elif near_zone:
                         new_status = 'ARMED'
                 elif status_now == 'ARMED':
                     if direction == 'LONG' and invalidation > 0 and current_price < invalidation:
                         new_status = 'INVALIDATED'
+                        close_reason = 'invalidation'
                     elif direction == 'SHORT' and invalidation > 0 and current_price > invalidation:
                         new_status = 'INVALIDATED'
+                        close_reason = 'invalidation'
                     elif is_in_zone:
                         new_status = 'FILLED'
+                        fill_price = current_price
                 elif status_now == 'FILLED':
                     if direction == 'LONG':
                         if tp2 > 0 and current_price >= tp2:
                             new_status = 'TP2_REACHED'
                             exit_price = tp2
+                            close_reason = 'tp2'
                         elif tp1 > 0 and current_price >= tp1:
                             new_status = 'TP1_REACHED'
                             exit_price = tp1
+                            close_reason = 'tp1'
                         elif sl > 0 and current_price <= sl:
                             new_status = 'STOPPED'
                             exit_price = sl
+                            close_reason = 'stop_loss'
                     elif direction == 'SHORT':
                         if tp2 > 0 and current_price <= tp2:
                             new_status = 'TP2_REACHED'
                             exit_price = tp2
+                            close_reason = 'tp2'
                         elif tp1 > 0 and current_price <= tp1:
                             new_status = 'TP1_REACHED'
                             exit_price = tp1
+                            close_reason = 'tp1'
                         elif sl > 0 and current_price >= sl:
                             new_status = 'STOPPED'
                             exit_price = sl
+                            close_reason = 'stop_loss'
                 elif status_now == 'TP1_REACHED':
                     if direction == 'LONG':
                         if tp2 > 0 and current_price >= tp2:
                             new_status = 'TP2_REACHED'
                             exit_price = tp2
+                            close_reason = 'tp2'
                         elif sl > 0 and current_price <= sl:
                             new_status = 'STOPPED'
                             exit_price = sl
+                            close_reason = 'stop_loss'
                     elif direction == 'SHORT':
                         if tp2 > 0 and current_price <= tp2:
                             new_status = 'TP2_REACHED'
                             exit_price = tp2
+                            close_reason = 'tp2'
                         elif sl > 0 and current_price >= sl:
                             new_status = 'STOPPED'
                             exit_price = sl
+                            close_reason = 'stop_loss'
 
                 # ── Expiry check ────────────────────────────────────────
                 if not new_status:
@@ -983,6 +1013,7 @@ def update_signal_statuses():
                                 cutoff_dt = cutoff_dt.replace(tzinfo=_tz.utc)
                             if _dt.now(_tz.utc) > cutoff_dt:
                                 new_status = 'EXPIRED'
+                                close_reason = 'expired'
                         except Exception:
                             pass
 
@@ -998,28 +1029,50 @@ def update_signal_statuses():
                                         if direction == 'LONG'
                                         else ((entry - exit_price) / entry * 100)
                                     )
-                                if new_status == 'TP1_REACHED':
+                                if new_status == 'FILLED':
+                                    conn.execute(text(f"""
+                                        UPDATE signals
+                                        SET status = 'FILLED',
+                                            filled_at = COALESCE(filled_at, NOW()),
+                                            fill_price = COALESCE(fill_price, :fill_price),
+                                            updated_at = NOW()
+                                        WHERE id = :id AND status IN {OPEN_STATUS_SQL}
+                                    """),
+                                    {
+                                        'id': signal.get('id'),
+                                        'fill_price': round(fill_price, 8) if fill_price is not None else None,
+                                    })
+                                elif new_status == 'TP1_REACHED':
                                     conn.execute(text(f"""
                                         UPDATE signals
                                         SET status = :status,
                                             close_price = :price,
-                                            pnl_pct = :pnl
+                                            pnl_pct = :pnl,
+                                            close_reason = :close_reason,
+                                            updated_at = NOW()
                                         WHERE id = :id AND status IN {OPEN_STATUS_SQL}
                                     """),
                                     {'status': new_status, 'price': exit_price,
                                      'pnl': round(pnl, 4) if pnl is not None else None,
+                                     'close_reason': close_reason,
                                      'id': signal.get('id')})
                                 elif new_status == 'EXPIRED':
                                     conn.execute(text(f"""
                                         UPDATE signals
-                                        SET status = 'EXPIRED', closed_at = NOW()
+                                        SET status = 'EXPIRED',
+                                            closed_at = NOW(),
+                                            close_reason = 'expired',
+                                            updated_at = NOW()
                                         WHERE id = :id AND status IN {OPEN_STATUS_SQL}
                                     """),
                                     {'id': signal.get('id')})
                                 elif new_status == 'INVALIDATED':
                                     conn.execute(text(f"""
                                         UPDATE signals
-                                        SET status = 'INVALIDATED', closed_at = NOW()
+                                        SET status = 'INVALIDATED',
+                                            closed_at = NOW(),
+                                            close_reason = 'invalidation',
+                                            updated_at = NOW()
                                         WHERE id = :id AND status IN {OPEN_STATUS_SQL}
                                     """),
                                     {'id': signal.get('id')})
@@ -1027,11 +1080,14 @@ def update_signal_statuses():
                                     conn.execute(text(f"""
                                         UPDATE signals
                                         SET status = :status, close_price = :price,
-                                            pnl_pct = :pnl, closed_at = NOW()
+                                            pnl_pct = :pnl, closed_at = NOW(),
+                                            close_reason = :close_reason,
+                                            updated_at = NOW()
                                         WHERE id = :id AND status IN {OPEN_STATUS_SQL}
                                     """),
                                     {'status': new_status, 'price': exit_price,
                                      'pnl': round(pnl, 4) if pnl is not None else None,
+                                     'close_reason': close_reason,
                                      'id': signal.get('id')})
                                 conn.commit()
 
@@ -1044,8 +1100,12 @@ def update_signal_statuses():
                             r.delete(_open_signal_key(symbol, direction, signal.get('timeframe', '')))
                         else:
                             signal['status'] = new_status
+                            if new_status == 'FILLED':
+                                signal['filled_at'] = datetime.now(timezone.utc).isoformat()
+                                signal['fill_price'] = round(fill_price, 8) if fill_price is not None else current_price
                             if exit_price is not None:
                                 signal['close_price'] = exit_price
+                                signal['close_reason'] = close_reason
                                 if entry > 0:
                                     signal['pnl_pct'] = round(
                                         ((exit_price - entry) / entry * 100)

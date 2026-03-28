@@ -18,6 +18,8 @@ class PracticalCalibrator:
     win probabilities without introducing opaque ML behavior.
     """
 
+    VERSION = "practical_calibrator_v1"
+
     def calibrate(
         self,
         *,

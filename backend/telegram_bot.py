@@ -229,7 +229,7 @@ async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 direction = sig.get("direction", "")
                 symbol = sig.get("symbol", "")
                 tf = sig.get("timeframe", "")
-                conf = sig.get("confidence", 0)
+                conf = sig.get("pwin_tp1", sig.get("confidence", 0))
                 entry = sig.get("entry", 0)
 
                 emoji = "🟢" if direction == "LONG" else "🔴"
@@ -242,7 +242,7 @@ async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     time_str = "—"
 
-                msg += f"{emoji} <b>{symbol}</b> {direction} {arrow} | {tf} | {conf}/100 | ${entry:,.4g} | {time_str}\n"
+                msg += f"{emoji} <b>{symbol}</b> {direction} {arrow} | {tf} | P(TP1) {conf}/100 | ${entry:,.4g} | {time_str}\n"
             except Exception:
                 pass
 

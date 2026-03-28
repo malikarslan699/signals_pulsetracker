@@ -70,6 +70,7 @@ class SignalService:
             entry_zone_low=schema.entry_zone_low,
             entry_zone_high=schema.entry_zone_high,
             entry_type=schema.entry_type,
+            entry_trigger=schema.entry_trigger,
             stop_loss=schema.stop_loss,
             invalidation_price=schema.invalidation_price,
             take_profit_1=schema.take_profit_1,
@@ -79,11 +80,16 @@ class SignalService:
             raw_score=schema.raw_score,
             max_possible_score=schema.max_possible_score,
             score_breakdown=schema.score_breakdown,
+            setup_reasons=schema.setup_reasons,
             ict_zones=schema.ict_zones,
             candle_snapshot=schema.candle_snapshot,
             mtf_analysis=schema.mtf_analysis,
+            model_version=schema.model_version,
             valid_until=schema.valid_until,
             expires_at=schema.expires_at,
+            filled_at=schema.filled_at,
+            fill_price=schema.fill_price,
+            close_reason=schema.close_reason,
             status=schema.status or "CREATED",
             alert_sent=False,
         )
@@ -225,7 +231,9 @@ class SignalService:
         self,
         signal_id: UUID,
         status: str,
+        fill_price: Optional[Decimal] = None,
         close_price: Optional[Decimal] = None,
+        close_reason: Optional[str] = None,
     ) -> Signal:
         """
         Update the lifecycle status of a signal.
@@ -233,6 +241,13 @@ class SignalService:
         """
         signal = await self.get_signal_by_id(signal_id)
         signal.status = canonicalize_status(status)
+
+        if signal.status == "FILLED":
+            if signal.filled_at is None:
+                signal.filled_at = datetime.now(tz=timezone.utc)
+            if fill_price is not None and signal.fill_price is None:
+                signal.fill_price = fill_price
+            signal.close_reason = None
 
         if close_price is not None:
             signal.close_price = close_price
@@ -248,6 +263,7 @@ class SignalService:
 
         if is_final_status(signal.status):
             signal.closed_at = datetime.now(tz=timezone.utc)
+            signal.close_reason = close_reason or signal.status.lower()
 
         # Remove from Redis active set if closed
         if is_final_status(signal.status):
@@ -463,6 +479,7 @@ class SignalService:
             "entry_zone_low": float(signal.entry_zone_low) if signal.entry_zone_low is not None else None,
             "entry_zone_high": float(signal.entry_zone_high) if signal.entry_zone_high is not None else None,
             "entry_type": signal.entry_type,
+            "entry_trigger": signal.entry_trigger,
             "stop_loss": stop_loss,
             "invalidation_price": float(signal.invalidation_price) if signal.invalidation_price is not None else None,
             "take_profit_1": take_profit_1,
@@ -475,13 +492,20 @@ class SignalService:
             "max_possible_score": signal.max_possible_score,
             "status": signal.status,
             "score_breakdown": signal.score_breakdown,
+            "setup_reasons": signal.setup_reasons,
             "ict_zones": signal.ict_zones,
             "mtf_analysis": signal.mtf_analysis,
+            "model_version": signal.model_version,
+            "created_at": signal.created_at.isoformat() if signal.created_at else None,
+            "updated_at": signal.updated_at.isoformat() if signal.updated_at else None,
             "fired_at": signal.fired_at.isoformat() if signal.fired_at else None,
             "valid_until": signal.valid_until.isoformat() if signal.valid_until else None,
             "expires_at": signal.expires_at.isoformat() if signal.expires_at else None,
+            "filled_at": signal.filled_at.isoformat() if signal.filled_at else None,
+            "fill_price": float(signal.fill_price) if signal.fill_price is not None else None,
             "closed_at": signal.closed_at.isoformat() if signal.closed_at else None,
             "close_price": float(signal.close_price) if signal.close_price is not None else None,
             "pnl_pct": float(signal.pnl_pct) if signal.pnl_pct is not None else None,
+            "close_reason": signal.close_reason,
             "alert_sent": signal.alert_sent,
         }

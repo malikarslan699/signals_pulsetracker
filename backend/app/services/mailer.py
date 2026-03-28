@@ -124,7 +124,7 @@ def build_signal_email(
     text = (
         f"Signal: {symbol} {direction}\n"
         f"Timeframe: {timeframe}\n"
-        f"Confidence: {confidence}%\n"
+        f"P(TP1): {confidence}%\n"
         f"Entry: {entry:.8g}\n"
         f"Stop Loss: {stop_loss:.8g}\n"
         f"Take Profit 1: {take_profit_1:.8g}\n\n"
@@ -133,7 +133,7 @@ def build_signal_email(
     html = (
         f"<p><b>Signal:</b> {symbol} {direction}</p>"
         f"<p><b>Timeframe:</b> {timeframe}<br/>"
-        f"<b>Confidence:</b> {confidence}%<br/>"
+        f"<b>P(TP1):</b> {confidence}%<br/>"
         f"<b>Entry:</b> {entry:.8g}<br/>"
         f"<b>Stop Loss:</b> {stop_loss:.8g}<br/>"
         f"<b>Take Profit 1:</b> {take_profit_1:.8g}</p>"

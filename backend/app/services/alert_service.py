@@ -233,10 +233,15 @@ class AlertService:
             return
 
         direction_emoji = "📈" if signal.direction == "LONG" else "📉"
+        probability_tp1 = (
+            float(signal.pwin_tp1)
+            if getattr(signal, "pwin_tp1", None) is not None
+            else float(signal.confidence)
+        )
         message = (
             f"{direction_emoji} *{signal.symbol}* — {signal.direction}\n"
             f"⏱ Timeframe: `{signal.timeframe}`\n"
-            f"🎯 Confidence: `{signal.confidence}%`\n\n"
+            f"🎯 P(TP1): `{probability_tp1:.0f}%`\n\n"
             f"📌 Entry: `{float(signal.entry):.8g}`\n"
             f"🛑 Stop Loss: `{float(signal.stop_loss):.8g}`\n"
             f"✅ TP1: `{float(signal.take_profit_1):.8g}`\n"

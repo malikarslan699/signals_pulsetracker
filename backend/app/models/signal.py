@@ -57,6 +57,7 @@ class Signal(Base):
         Numeric(20, 8), nullable=True
     )
     entry_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    entry_trigger: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     stop_loss: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
     invalidation_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(20, 8), nullable=True
@@ -79,11 +80,22 @@ class Signal(Base):
 
     # JSON analytics fields
     score_breakdown: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    setup_reasons: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     ict_zones: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     candle_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     mtf_analysis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    model_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     fired_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
@@ -93,13 +105,18 @@ class Signal(Base):
     expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    filled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     closed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
     # Close / PnL tracking
+    fill_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     close_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     pnl_pct: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+    close_reason: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     # Alert tracking
     alert_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

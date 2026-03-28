@@ -33,7 +33,7 @@ BAND_EMOJI = {
 def format_signal_message(signal: dict) -> str:
     """Format a professional Telegram signal message"""
     direction = signal.get('direction', 'LONG')
-    confidence = signal.get('confidence', 0)
+    probability_tp1 = signal.get('pwin_tp1', signal.get('confidence', 0))
     band = signal.get('confidence_band', 'HIGH')
     entry = signal.get('entry', 0)
     sl = signal.get('stop_loss', 0)
@@ -69,7 +69,7 @@ def format_signal_message(signal: dict) -> str:
 
 {DIRECTION_EMOJI[direction]} <b>{symbol}</b> ({market}) — <b>{DIRECTION_LABEL[direction]}</b>
 ⏱ Timeframe: <b>{timeframe}</b>
-{BAND_EMOJI.get(band, '📊')} Confidence: <b>{confidence}/100</b> — {band.replace('_', ' ')}
+{BAND_EMOJI.get(band, '📊')} P(TP1): <b>{probability_tp1}/100</b> — {band.replace('_', ' ')}
 
 💰 <b>Entry:</b>     {fmt(entry)}
 🛑 <b>Stop Loss:</b>  {fmt(sl)} (-{sl_pct:.1f}%)
@@ -209,7 +209,7 @@ async def _send_signal_alerts_async(signal_id: str) -> dict:
             return {'signal_id': signal_id, 'alerts_sent': 0, 'error': 'Signal not found'}
 
         message = format_signal_message(signal_data)
-        confidence = signal_data.get('confidence', 0)
+        confidence = signal_data.get('pwin_tp1', signal_data.get('confidence', 0))
 
         # Always send to VIP channel if confidence >= 70
         if TELEGRAM_VIP_CHANNEL_ID and confidence >= 70:

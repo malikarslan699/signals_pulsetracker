@@ -156,7 +156,7 @@ export default function StatsPage() {
           trend="up"
         />
         <KPICard
-          label="Avg Confidence"
+          label="Avg P(TP1)"
           value={stats ? `${stats.avg_confidence.toFixed(1)}%` : "--"}
           icon={<ShieldCheck className="h-3.5 w-3.5" />}
         />

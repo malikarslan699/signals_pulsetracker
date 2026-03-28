@@ -7,7 +7,10 @@ from datetime import datetime, timezone, timedelta
 from loguru import logger
 
 from workers.celery_app import app
-from app.services.signal_lifecycle import FINAL_STATUS_SQL, OPEN_STATUS_SQL
+from app.services.signal_lifecycle import (
+    CANONICAL_OPEN_STATUS_SQL,
+    FINAL_STATUS_SQL,
+)
 
 
 def _open_signal_key(symbol: str, direction: str, timeframe: str) -> str:
@@ -66,7 +69,7 @@ def expire_old_signals():
             result = conn.execute(text(f"""
                 UPDATE signals
                 SET status = 'EXPIRED', closed_at = NOW()
-                WHERE status IN {OPEN_STATUS_SQL}
+                WHERE status IN {CANONICAL_OPEN_STATUS_SQL}
                   AND expires_at < NOW()
                 RETURNING id, symbol, direction, timeframe
             """))
@@ -202,7 +205,7 @@ def purge_low_quality_signals(min_confidence: int | None = None):
                 result = conn.execute(text(f"""
                     UPDATE signals
                     SET status = 'EXPIRED', closed_at = NOW()
-                    WHERE status IN {OPEN_STATUS_SQL}
+                    WHERE status IN {CANONICAL_OPEN_STATUS_SQL}
                       AND confidence < :min_confidence
                 """), {'min_confidence': min_confidence})
                 expired_db = result.rowcount

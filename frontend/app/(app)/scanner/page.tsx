@@ -130,7 +130,9 @@ export default function ScannerPage() {
     for (const s of liveSignalsPayload?.signals || []) {
       const key = s.symbol.toUpperCase();
       const existing = m.get(key);
-      if (!existing || s.confidence > existing.confidence) {
+      const candidate = s.pwin_tp1 ?? s.confidence;
+      const existingScore = existing ? (existing.pwin_tp1 ?? existing.confidence) : -1;
+      if (!existing || candidate > existingScore) {
         m.set(key, s);
       }
     }
@@ -210,7 +212,9 @@ export default function ScannerPage() {
     for (const s of signals) {
       const key = `${s.symbol}:${s.direction}:${s.timeframe}`;
       const existing = bestByKey.get(key);
-      if (!existing || s.confidence > existing.confidence) {
+      const candidate = s.pwin_tp1 ?? s.confidence;
+      const existingScore = existing ? (existing.pwin_tp1 ?? existing.confidence) : -1;
+      if (!existing || candidate > existingScore) {
         bestByKey.set(key, s);
       }
     }
@@ -221,9 +225,17 @@ export default function ScannerPage() {
 
     result = [...result].sort((a, b) => {
       let aVal: string | number =
-        sortField === "rr_tp1" ? a.rr_tp1 ?? -1 : (a[sortField] as string | number);
+        sortField === "rr_tp1"
+          ? a.rr_tp1 ?? -1
+          : sortField === "confidence"
+            ? a.pwin_tp1 ?? a.confidence
+            : (a[sortField] as string | number);
       let bVal: string | number =
-        sortField === "rr_tp1" ? b.rr_tp1 ?? -1 : (b[sortField] as string | number);
+        sortField === "rr_tp1"
+          ? b.rr_tp1 ?? -1
+          : sortField === "confidence"
+            ? b.pwin_tp1 ?? b.confidence
+            : (b[sortField] as string | number);
       if (typeof aVal === "string") aVal = aVal.toLowerCase();
       if (typeof bVal === "string") bVal = bVal.toLowerCase();
       if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
@@ -303,6 +315,7 @@ export default function ScannerPage() {
                 const p = priceBySymbol.get(symbol);
                 const s = liveBySymbol.get(symbol);
                 const a = favoriteAnalyses[symbol];
+                const activeProbability = s ? (s.pwin_tp1 ?? s.confidence) : null;
                 const hasAnalysisAttempt = Object.prototype.hasOwnProperty.call(favoriteAnalyses, symbol);
                 return (
                   <div
@@ -337,7 +350,7 @@ export default function ScannerPage() {
                       {s ? (
                         <span>
                           Active setup: <span className={s.direction === "LONG" ? "text-long" : "text-short"}>{s.direction}</span>{" "}
-                          {s.timeframe} · {s.confidence}%
+                          {s.timeframe} · P(TP1) {activeProbability}%
                         </span>
                       ) : (
                         <span>No active setup yet</span>
@@ -348,7 +361,7 @@ export default function ScannerPage() {
                         <span>Indicator panel: monthly/yearly/lifetime required</span>
                       ) : a ? (
                         <span>
-                          Indicators ({watchTf}): {a.overall_direction} {a.confidence}% · RSI {fmt(a.indicators?.rsi_14)} · ADX{" "}
+                          Indicators ({watchTf}): {a.overall_direction} · Setup {a.confidence}/100 · RSI {fmt(a.indicators?.rsi_14)} · ADX{" "}
                           {fmt(a.indicators?.adx)} · Vol x{fmt(a.indicators?.volume_ratio, 2)}
                         </span>
                       ) : hasAnalysisAttempt ? (
@@ -417,7 +430,7 @@ export default function ScannerPage() {
 
               <div>
                 <label className="text-xs text-text-muted mb-1.5 block">
-                  Min Confidence: <span className="font-mono text-long">{minConfidence}</span>
+                  Min P(TP1): <span className="font-mono text-long">{minConfidence}%</span>
                 </label>
                 <input
                   type="range"
@@ -444,7 +457,7 @@ export default function ScannerPage() {
               <button onClick={() => handleSort("symbol")} className="flex items-center gap-1 text-left hover:text-text-primary">Pair <SortIcon field="symbol" /></button>
               <button onClick={() => handleSort("direction")} className="flex items-center gap-1 hover:text-text-primary">Dir <SortIcon field="direction" /></button>
               <span>TF</span>
-              <button onClick={() => handleSort("confidence")} className="flex items-center gap-1 hover:text-text-primary">Confidence <SortIcon field="confidence" /></button>
+              <button onClick={() => handleSort("confidence")} className="flex items-center gap-1 hover:text-text-primary">P(TP1) <SortIcon field="confidence" /></button>
               <span className="text-right">Entry</span>
               <span className="text-right">SL</span>
               <span className="text-right">TP1</span>
@@ -463,53 +476,56 @@ export default function ScannerPage() {
                       <div className="w-28 h-2 bg-surface-2 rounded" />
                     </div>
                   ))
-                : filteredSorted.map((signal) => (
-                    <div key={signal.id} className="data-row grid grid-cols-[minmax(150px,1fr)_68px_48px_120px_92px_92px_92px_58px_62px_76px] items-center gap-2 px-3 py-2 border-b border-border text-xs font-mono">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => toggleFavorite(signal.symbol)}
-                          title={favorites.includes(signal.symbol.toUpperCase()) ? "Remove favorite" : "Add to favorites"}
-                          className="text-text-faint hover:text-gold transition-colors"
-                        >
-                          <Star
-                            className={`w-3.5 h-3.5 ${
-                              favorites.includes(signal.symbol.toUpperCase())
-                                ? "fill-gold text-gold"
-                                : ""
-                            }`}
-                          />
-                        </button>
-                        <span className="font-semibold text-text-primary">{signal.symbol}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 bg-surface-2 rounded text-text-muted capitalize">{signal.market}</span>
-                      </div>
-
-                      <DirectionBadge direction={signal.direction} />
-
-                      <span className="text-[10px] text-text-muted">{signal.timeframe}</span>
-
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="flex-1 min-w-[56px]"><ConfidenceBar value={signal.confidence} showLabel={false} /></div>
-                        <ConfidenceBadge value={signal.confidence} className="w-8 text-right" />
-                      </div>
-
-                      <span className="text-right text-text-secondary">{formatPrice(signal.entry)}</span>
-                      <span className="text-right text-short">{formatPrice(signal.stop_loss)}</span>
-                      <span className="text-right text-long">{formatPrice(signal.take_profit_1)}</span>
-                      <span className="text-right text-text-secondary">
-                        {signal.rr_tp1 != null ? `${signal.rr_tp1}:1` : "—"}
-                      </span>
-                      <span className="text-right text-text-muted text-[10px]">{formatTimeAgo(signal.fired_at)}</span>
-
-                      <div className="text-right">
-                        <Link href={`/signal/${signal.id}`}>
-                          <button className="inline-flex items-center gap-1 px-2 py-1 bg-surface-2 border border-border rounded text-[10px] text-text-muted hover:text-text-primary hover:border-long transition-colors">
-                            <ExternalLink className="w-3 h-3" />
-                            View
+                : filteredSorted.map((signal) => {
+                    const probability = signal.pwin_tp1 ?? signal.confidence;
+                    return (
+                      <div key={signal.id} className="data-row grid grid-cols-[minmax(150px,1fr)_68px_48px_120px_92px_92px_92px_58px_62px_76px] items-center gap-2 px-3 py-2 border-b border-border text-xs font-mono">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => toggleFavorite(signal.symbol)}
+                            title={favorites.includes(signal.symbol.toUpperCase()) ? "Remove favorite" : "Add to favorites"}
+                            className="text-text-faint hover:text-gold transition-colors"
+                          >
+                            <Star
+                              className={`w-3.5 h-3.5 ${
+                                favorites.includes(signal.symbol.toUpperCase())
+                                  ? "fill-gold text-gold"
+                                  : ""
+                              }`}
+                            />
                           </button>
-                        </Link>
+                          <span className="font-semibold text-text-primary">{signal.symbol}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-surface-2 rounded text-text-muted capitalize">{signal.market}</span>
+                        </div>
+
+                        <DirectionBadge direction={signal.direction} />
+
+                        <span className="text-[10px] text-text-muted">{signal.timeframe}</span>
+
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="flex-1 min-w-[56px]"><ConfidenceBar value={probability} showLabel={false} /></div>
+                          <ConfidenceBadge value={probability} className="w-8 text-right" />
+                        </div>
+
+                        <span className="text-right text-text-secondary">{formatPrice(signal.entry)}</span>
+                        <span className="text-right text-short">{formatPrice(signal.stop_loss)}</span>
+                        <span className="text-right text-long">{formatPrice(signal.take_profit_1)}</span>
+                        <span className="text-right text-text-secondary">
+                          {signal.rr_tp1 != null ? `${signal.rr_tp1}:1` : "—"}
+                        </span>
+                        <span className="text-right text-text-muted text-[10px]">{formatTimeAgo(signal.fired_at)}</span>
+
+                        <div className="text-right">
+                          <Link href={`/signal/${signal.id}`}>
+                            <button className="inline-flex items-center gap-1 px-2 py-1 bg-surface-2 border border-border rounded text-[10px] text-text-muted hover:text-text-primary hover:border-long transition-colors">
+                              <ExternalLink className="w-3 h-3" />
+                              View
+                            </button>
+                          </Link>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
             </div>
 
             {!isLoading && filteredSorted.length === 0 && (

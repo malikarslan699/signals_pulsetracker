@@ -10,7 +10,10 @@ from datetime import datetime, timezone
 from loguru import logger
 
 from workers.celery_app import app
-from app.services.signal_lifecycle import OPEN_STATUS_SQL, canonicalize_status
+from app.services.signal_lifecycle import (
+    CANONICAL_OPEN_STATUS_SQL,
+    canonicalize_status,
+)
 from workers.scanner_task import _has_twelvedata_key, _run_async
 
 
@@ -165,7 +168,7 @@ def _invalidate_signal(r, signal: dict, reason: str):
                     UPDATE signals
                     SET status = 'INVALIDATED',
                         closed_at = NOW()
-                    WHERE id = :id AND status IN {OPEN_STATUS_SQL}
+                    WHERE id = :id AND status IN {CANONICAL_OPEN_STATUS_SQL}
                 """), {"id": signal_id})
                 conn.commit()
     except Exception as e:

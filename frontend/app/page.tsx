@@ -22,7 +22,7 @@ const FEATURES = [
     icon: Bell,
     title: "Real-time Alerts",
     description:
-      "Instant Telegram notifications the moment a high-confidence signal fires on any pair.",
+      "Instant Telegram notifications the moment a high-quality setup fires on any pair.",
     color: "text-gold",
     bg: "bg-gold/10",
   },
@@ -36,9 +36,9 @@ const FEATURES = [
   },
   {
     icon: TrendingUp,
-    title: "Confidence Score System",
+    title: "Setup Score + P(TP1)",
     description:
-      "Every signal gets a 0-100 confidence score based on 35+ technical indicators.",
+      "Every signal includes a structural setup score plus calibrated TP1 probability guidance.",
     color: "text-short",
     bg: "bg-short/10",
   },
@@ -61,9 +61,9 @@ const HOW_IT_WORKS = [
   },
   {
     step: "02",
-    title: "Signal Fired with Confidence",
+    title: "Signal Fired with Ranked Quality",
     description:
-      "When a high-confluence setup is detected, a signal is generated with entry, SL, and TP targets plus a confidence score.",
+      "When a high-confluence setup is detected, a signal is generated with entry, SL, TP targets, setup score, and TP1 probability.",
   },
   {
     step: "03",
@@ -192,7 +192,7 @@ export default function LandingPage() {
 
           <p className="text-lg text-text-secondary max-w-2xl mx-auto mb-10 leading-relaxed">
             Real-time crypto and forex signals with 35+ indicators, ICT analysis,
-            and confidence scoring. Never miss a high-probability setup again.
+            and calibrated TP1 probability plus setup scoring. Never miss a high-quality setup again.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

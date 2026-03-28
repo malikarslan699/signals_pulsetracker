@@ -41,6 +41,7 @@ class GeneratedSignal:
     entry_zone_low: float
     entry_zone_high: float
     entry_type: str
+    entry_trigger: str
     stop_loss: float
     invalidation_price: float
     take_profit_1: float
@@ -56,6 +57,8 @@ class GeneratedSignal:
     mtf_analysis: dict
     candle_snapshot: dict
     top_confluences: list[str]
+    setup_reasons: list[str]
+    model_version: str
 
     fired_at: str
     valid_until: str
@@ -201,6 +204,7 @@ class SignalGenerator:
             entry_zone_low=round(entry_plan["zone_low"], 8),
             entry_zone_high=round(entry_plan["zone_high"], 8),
             entry_type=entry_plan["entry_type"],
+            entry_trigger="touch",
             stop_loss=round(risk_plan["stop_loss"], 8),
             invalidation_price=round(risk_plan["invalidation_price"], 8),
             take_profit_1=round(risk_plan["take_profit_1"], 8),
@@ -215,6 +219,8 @@ class SignalGenerator:
             mtf_analysis=exported_mtf,
             candle_snapshot=snapshot,
             top_confluences=top_confluences,
+            setup_reasons=top_confluences,
+            model_version=self.calibrator.VERSION,
             fired_at=now.isoformat(),
             valid_until=valid_until.isoformat(),
             expires_at=expires_at.isoformat(),

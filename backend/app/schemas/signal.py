@@ -108,6 +108,7 @@ class SignalCreate(BaseModel):
     entry_zone_low: Optional[Decimal] = None
     entry_zone_high: Optional[Decimal] = None
     entry_type: Optional[str] = None
+    entry_trigger: Optional[str] = "touch"
     stop_loss: Decimal
     invalidation_price: Optional[Decimal] = None
     take_profit_1: Decimal
@@ -117,11 +118,16 @@ class SignalCreate(BaseModel):
     raw_score: int
     max_possible_score: int
     score_breakdown: Optional[Dict[str, Any]] = None
+    setup_reasons: Optional[List[str]] = None
     ict_zones: Optional[Dict[str, Any]] = None
     candle_snapshot: Optional[Dict[str, Any]] = None
     mtf_analysis: Optional[Dict[str, Any]] = None
+    model_version: Optional[str] = None
     valid_until: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    filled_at: Optional[datetime] = None
+    fill_price: Optional[Decimal] = None
+    close_reason: Optional[str] = None
     status: str = "CREATED"
 
 
@@ -145,6 +151,7 @@ class SignalResponse(BaseModel):
     entry_zone_low: Optional[Decimal] = None
     entry_zone_high: Optional[Decimal] = None
     entry_type: Optional[str] = None
+    entry_trigger: Optional[str] = None
     stop_loss: Decimal
     invalidation_price: Optional[Decimal] = None
     take_profit_1: Decimal
@@ -158,15 +165,22 @@ class SignalResponse(BaseModel):
     status: str
     top_confluences: Optional[List[str]] = None
     score_breakdown: Optional[Dict[str, Any]] = None
+    setup_reasons: Optional[List[str]] = None
     ict_zones: Optional[Dict[str, Any]] = None
     candle_snapshot: Optional[Dict[str, Any]] = None
     mtf_analysis: Optional[Dict[str, Any]] = None
+    model_version: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     fired_at: datetime
     valid_until: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    filled_at: Optional[datetime] = None
+    fill_price: Optional[Decimal] = None
     closed_at: Optional[datetime] = None
     close_price: Optional[Decimal] = None
     pnl_pct: Optional[Decimal] = None
+    close_reason: Optional[str] = None
     alert_sent: bool
 
 
@@ -224,4 +238,6 @@ class SignalStatusUpdate(BaseModel):
     """Payload for updating a signal's lifecycle status."""
 
     status: str = Field(pattern=r"^(CREATED|ARMED|FILLED|TP1_REACHED|TP2_REACHED|STOPPED|EXPIRED|INVALIDATED)$")
+    fill_price: Optional[Decimal] = None
     close_price: Optional[Decimal] = None
+    close_reason: Optional[str] = None

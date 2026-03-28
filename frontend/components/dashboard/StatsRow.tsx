@@ -41,7 +41,7 @@ export function StatsRow() {
       />
       <KPIChip label="TP" value={tp90} icon={<TrendingUp className="w-3 h-3 text-long" />} trend="up" />
       <KPIChip label="SL" value={sl90} icon={<TrendingDown className="w-3 h-3 text-short" />} trend="down" />
-      <KPIChip label="Avg Conf" value={stats?.avg_confidence ?? "--"} icon={<Target className="w-3 h-3 text-blue" />} />
+      <KPIChip label="Avg P(TP1)" value={stats?.avg_confidence != null ? `${stats.avg_confidence}%` : "--"} icon={<Target className="w-3 h-3 text-blue" />} />
       <KPIChip label="Next Scan" value={stats?.next_scan_in ?? "--"} icon={<Clock className="w-3 h-3 text-gold" />} />
     </div>
   );

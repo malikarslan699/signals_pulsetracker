@@ -144,7 +144,7 @@ export default function HistoryPage() {
           <span>Dir</span>
           <span>TF</span>
           <div className="flex justify-end">
-            <SortTh label="Conf" sortKey="confidence" current={sortKey} dir={sortDir} onSort={handleSort} />
+            <SortTh label="P(TP1)" sortKey="confidence" current={sortKey} dir={sortDir} onSort={handleSort} />
           </div>
           <div className="flex justify-end">
             <SortTh label="Entry" sortKey="entry" current={sortKey} dir={sortDir} onSort={handleSort} />
@@ -188,7 +188,7 @@ export default function HistoryPage() {
                 <span className="font-bold text-text-primary truncate">{s.symbol}</span>
                 <DirectionBadge direction={s.direction as "LONG" | "SHORT"} />
                 <span className="text-text-muted">{s.timeframe}</span>
-                <span className="text-right"><ConfidenceBadge value={s.confidence} /></span>
+                <span className="text-right"><ConfidenceBadge value={s.pwin_tp1 ?? s.confidence} /></span>
                 <span className="text-right text-gold">{formatPrice(s.entry)}</span>
                 <span className="text-right text-long">{formatPrice(s.take_profit_1)}</span>
                 <span className="text-right text-short">{formatPrice(s.stop_loss)}</span>

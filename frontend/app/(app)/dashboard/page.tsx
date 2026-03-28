@@ -111,7 +111,7 @@ export default function DashboardPage() {
               <span>Symbol</span>
               <span>Dir</span>
               <span>TF</span>
-              <span>Confidence</span>
+              <span>P(TP1)</span>
               <span className="text-right">Entry</span>
               <span className="text-right">SL</span>
               <span className="text-right">TP1</span>

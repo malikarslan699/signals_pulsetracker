@@ -61,10 +61,10 @@ export default function SignalDetailPage() {
   }
 
   const isLong = signal.direction === "LONG";
-  const bandColor = confidenceBandColor(signal.confidence);
-  const bandLabel = confidenceBandLabel(signal.confidence);
-  const htfEntries = Object.entries(signal.mtf_analysis || {}).filter(([tf]) => tf === "1H" || tf === "4H");
   const probabilityTp1 = signal.pwin_tp1 ?? signal.confidence;
+  const bandColor = confidenceBandColor(probabilityTp1);
+  const bandLabel = confidenceBandLabel(probabilityTp1);
+  const htfEntries = Object.entries(signal.mtf_analysis || {}).filter(([tf]) => tf === "1H" || tf === "4H");
   const probabilityTp2 = signal.pwin_tp2 ?? null;
   const setupScore = signal.setup_score ?? signal.raw_score ?? signal.confidence;
 
