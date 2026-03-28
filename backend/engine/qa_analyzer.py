@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import Optional
 import json
 
+from app.services.signal_lifecycle import canonicalize_status
+
 
 # ── Indicator category labels ──────────────────────────────────────────────
 CATEGORY_LABELS = {
@@ -51,6 +53,9 @@ def analyze_signal(
       - risk_assessment: str
       - outcome_summary: str (if resolved)
     """
+
+    # Normalize legacy statuses to canonical lifecycle values.
+    status = canonicalize_status(status)
 
     # ── Parse category scores ──────────────────────────────────────────────
     category_totals: dict[str, dict] = {}
@@ -167,11 +172,11 @@ def analyze_signal(
         outcome = f"WIN — TP2 hit. PnL: {pnl_pct:+.2f}%" if pnl_pct is not None else "WIN — TP2 hit"
     elif status == 'TP1_REACHED':
         outcome = f"OPEN — TP1 reached, monitoring TP2. Locked PnL: {pnl_pct:+.2f}%" if pnl_pct is not None else "OPEN — TP1 reached, monitoring TP2"
-    elif status in ('sl_hit', 'STOPPED'):
+    elif status == 'STOPPED':
         outcome = f"LOSS — SL hit. PnL: {pnl_pct:+.2f}%" if pnl_pct is not None else "LOSS — SL hit"
-    elif status in ('expired', 'EXPIRED', 'invalidated', 'INVALIDATED'):
+    elif status in ('EXPIRED', 'INVALIDATED'):
         outcome = "EXPIRED — price did not reach TP or SL within signal window"
-    elif status in ('active', 'CREATED', 'ARMED', 'FILLED'):
+    elif status in ('CREATED', 'ARMED', 'FILLED'):
         outcome = "ACTIVE — signal still open"
     else:
         outcome = f"STATUS: {status}"
