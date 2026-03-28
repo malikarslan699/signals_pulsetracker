@@ -63,8 +63,8 @@ export default function LoginPage() {
       )}
 
       {verifyPending && (
-        <div className="bg-blue/10 border border-blue/20 rounded-lg px-4 py-3 mb-5">
-          <p className="text-sm text-blue mb-2">
+        <div className="bg-long/10 border border-long/20 rounded-lg px-4 py-3 mb-5">
+          <p className="text-sm text-long mb-2">
             Account created. Please verify your email before login.
           </p>
           <div className="flex gap-2">
@@ -73,7 +73,7 @@ export default function LoginPage() {
               value={resendEmail}
               onChange={(e) => setResendEmail(e.target.value)}
               placeholder="your@email.com"
-              className="flex-1 px-3 py-2 bg-surface-2 border border-border rounded-lg text-xs text-text-primary focus:outline-none focus:border-blue"
+              className="flex-1 px-3 py-2 bg-surface-2 border border-border rounded-lg text-xs text-text-primary focus:outline-none focus:border-long"
             />
             <button
               type="button"
@@ -85,7 +85,7 @@ export default function LoginPage() {
                 resendMutation.mutate(resendEmail);
               }}
               disabled={resendMutation.isPending}
-              className="px-3 py-2 bg-blue text-white rounded-lg text-xs font-medium hover:bg-blue/90 disabled:opacity-60"
+              className="px-3 py-2 bg-long text-white rounded-lg text-xs font-medium hover:bg-long/90 disabled:opacity-60"
             >
               {resendMutation.isPending ? "Sending..." : "Resend Link"}
             </button>
@@ -110,7 +110,7 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple transition-colors"
+            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-long transition-colors"
           />
         </div>
 
@@ -131,7 +131,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full px-4 py-2.5 pr-10 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple transition-colors"
+              className="w-full px-4 py-2.5 pr-10 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-long transition-colors"
             />
             <button
               type="button"
@@ -151,7 +151,7 @@ export default function LoginPage() {
         <div className="flex justify-end -mt-1">
           <Link
             href="/forgot-password"
-            className="text-xs text-text-muted hover:text-purple transition-colors"
+            className="text-xs text-text-muted hover:text-long transition-colors"
           >
             Forgot password?
           </Link>
@@ -161,7 +161,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={isPending}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-purple hover:bg-purple/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all shadow-lg shadow-purple/20 mt-2"
+          className="w-full flex items-center justify-center gap-2 py-3 bg-long hover:bg-long/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all shadow-lg shadow-long/20 mt-2"
         >
           {isPending ? (
             <>
@@ -181,7 +181,7 @@ export default function LoginPage() {
         Don&apos;t have an account?{" "}
         <Link
           href="/register"
-          className="text-purple hover:text-purple/80 font-medium transition-colors"
+          className="text-long hover:text-long/80 font-medium transition-colors"
         >
           Register for free
         </Link>

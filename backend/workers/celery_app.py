@@ -73,6 +73,13 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour='*/6'),
         'options': {'queue': 'default', 'priority': 1},
     },
+    # Delete unverified accounts older than 7 days (daily)
+    'delete-stale-unverified-users': {
+        'task': 'workers.cleanup_task.delete_stale_unverified_users',
+        'schedule': crontab(hour=3, minute=0),
+        'kwargs': {'days': 7},
+        'options': {'queue': 'default', 'priority': 1},
+    },
     # Purge low-quality signals from Redis + DB every 30 minutes
     'purge-low-quality-signals': {
         'task': 'workers.cleanup_task.purge_low_quality_signals',

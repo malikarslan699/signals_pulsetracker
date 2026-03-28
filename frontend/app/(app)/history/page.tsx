@@ -10,6 +10,7 @@ import { KPIChip } from "@/components/terminal/KPIChip";
 import { Panel } from "@/components/terminal/Panel";
 import { DirectionBadge, StatusBadge, ConfidenceBadge } from "@/components/terminal/Badges";
 import { cn } from "@/lib/utils";
+import { useUserStore } from "@/store/userStore";
 
 type SortKey = "confidence" | "entry" | "take_profit_1" | "stop_loss" | "pnl_pct" | "fired_at";
 type SortDir = "asc" | "desc" | null;
@@ -18,8 +19,8 @@ const COL = "grid-cols-[1fr_62px_46px_52px_88px_80px_80px_56px_72px_60px]";
 
 function SortIcon({ dir }: { dir: SortDir }) {
   if (!dir) return <ArrowUpDown className="w-3 h-3 opacity-40" />;
-  if (dir === "asc") return <ArrowUp className="w-3 h-3 text-purple" />;
-  return <ArrowDown className="w-3 h-3 text-purple" />;
+  if (dir === "asc") return <ArrowUp className="w-3 h-3 text-long" />;
+  return <ArrowDown className="w-3 h-3 text-long" />;
 }
 
 function SortTh({ label, sortKey, current, dir, onSort }: {
@@ -36,15 +37,28 @@ function SortTh({ label, sortKey, current, dir, onSort }: {
 
 export default function HistoryPage() {
   const router = useRouter();
+  const user = useUserStore((s) => s.user);
   const [direction, setDirection] = useState("ALL");
   const [timeframe, setTimeframe] = useState("ALL");
   const [sortKey, setSortKey] = useState<SortKey | null>("fired_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["signal-history"],
-    queryFn: () => api.get(`/api/v1/signals/history?days=90`).then((r) => r.data),
+  const requestedDays =
+    user?.plan === "trial"
+      ? 7
+      : user?.plan === "yearly"
+        ? 180
+        : user?.plan === "lifetime"
+          ? 365
+          : 90;
+
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["signal-history", requestedDays],
+    queryFn: () =>
+      api.get(`/api/v1/signals/history?days=${requestedDays}`).then((r) => r.data),
   });
+  const errorMessage =
+    (error as any)?.response?.data?.detail || "Could not load signal history.";
 
   const allSignals: Signal[] = Array.isArray(data) ? data : data?.signals || data?.items || [];
   const filtered = allSignals.filter((s) => {
@@ -88,7 +102,9 @@ export default function HistoryPage() {
 
   return (
     <div className="space-y-2 pb-20 lg:pb-4">
-      <h1 className="text-xs font-bold text-text-muted uppercase tracking-widest">Signal History · Last 90 Days</h1>
+      <h1 className="text-xs font-bold text-text-muted uppercase tracking-widest">
+        Signal History · Last {requestedDays} Days
+      </h1>
 
       {/* KPI Strip */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -152,7 +168,7 @@ export default function HistoryPage() {
           ))
         ) : isError ? (
           <div className="p-8 text-center text-text-muted text-xs">
-            Signal history requires a Pro subscription.
+            {errorMessage}
           </div>
         ) : signals.length === 0 ? (
           <div className="p-12 text-center text-text-muted text-xs">No signals found</div>

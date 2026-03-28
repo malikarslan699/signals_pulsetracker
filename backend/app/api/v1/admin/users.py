@@ -167,7 +167,7 @@ async def update_user(
     "/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
-    summary="Soft deactivate a user account",
+    summary="Delete a user account",
 )
 async def deactivate_user(
     user_id: UUID,
@@ -175,8 +175,7 @@ async def deactivate_user(
     current_admin: User = Depends(get_current_active_user),
 ) -> Response:
     """
-    Soft-deactivate a user account by setting is_active = False.
-    Does not delete the record from the database.
+    Permanently delete a user account.
     """
     result = await db.execute(select(User).where(User.id == user_id))
     user: Optional[User] = result.scalar_one_or_none()
@@ -186,9 +185,15 @@ async def deactivate_user(
     if user.id == current_admin.id:
         raise ValidationError("Administrators cannot deactivate their own account.")
 
-    user.is_active = False
+    if current_admin.role not in ("owner", "superadmin") and user.role in (
+        "owner",
+        "superadmin",
+    ):
+        raise ConflictError("Only owner can delete owner accounts.")
+
+    await db.delete(user)
     await db.flush()
-    logger.info(f"Admin {current_admin.id} deactivated user {user_id}.")
+    logger.info(f"Admin {current_admin.id} deleted user {user_id}.")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -25,7 +25,7 @@ def cleanup_old_signals(days_to_keep: int = 30):
             result = conn.execute(text("""
                 DELETE FROM signals
                 WHERE fired_at < :cutoff
-                  AND status IN ('sl_hit', 'tp2_hit', 'expired')
+                  AND status IN ('sl_hit', 'tp1_hit', 'tp2_hit', 'tp3_hit', 'expired')
                 RETURNING id
             """), {'cutoff': cutoff})
             deleted = result.rowcount
@@ -76,8 +76,45 @@ def expire_old_signals():
         return {'error': str(e)}
 
 
+@app.task(name='workers.cleanup_task.delete_stale_unverified_users')
+def delete_stale_unverified_users(days: int = 7):
+    """
+    Delete accounts that never verified their email within `days`.
+    Keeps owner/superadmin accounts as a safety guard.
+    """
+    try:
+        from sqlalchemy import create_engine, text
+
+        db_url = os.getenv('DATABASE_URL', '').replace('+asyncpg', '')
+        if not db_url:
+            return {'error': 'No database URL'}
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        engine = create_engine(db_url)
+
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                DELETE FROM users
+                WHERE is_verified = false
+                  AND created_at < :cutoff
+                  AND role NOT IN ('owner', 'superadmin')
+                RETURNING id
+            """), {'cutoff': cutoff})
+            deleted = result.rowcount
+            conn.commit()
+
+        if deleted:
+            logger.info(
+                f"[CLEANUP] Deleted {deleted} unverified users older than {days} days"
+            )
+        return {'deleted': deleted, 'cutoff': cutoff.isoformat(), 'days': days}
+    except Exception as e:
+        logger.error(f"delete_stale_unverified_users error: {e}")
+        return {'error': str(e)}
+
+
 @app.task(name='workers.cleanup_task.purge_low_quality_signals')
-def purge_low_quality_signals(min_confidence: int = 75):
+def purge_low_quality_signals(min_confidence: int | None = None):
     """
     One-time (and periodic) purge:
     1. Remove signals below min_confidence from Redis active sets
@@ -88,6 +125,17 @@ def purge_low_quality_signals(min_confidence: int = 75):
     import redis as redis_lib
 
     r = redis_lib.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+    if min_confidence is None:
+        try:
+            raw_cfg = r.get('admin:system_config')
+            if raw_cfg:
+                cfg = json.loads(raw_cfg)
+                min_confidence = int(cfg.get('min_signal_confidence', 60) or 60)
+            else:
+                min_confidence = 60
+        except Exception:
+            min_confidence = 60
+    min_confidence = max(0, min(100, int(min_confidence)))
     purged_redis = 0
     expired_db = 0
 

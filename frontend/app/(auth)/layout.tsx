@@ -1,4 +1,4 @@
-import { Zap } from "lucide-react";
+import { Activity } from "lucide-react";
 import Link from "next/link";
 
 export default function AuthLayout({
@@ -7,30 +7,32 @@ export default function AuthLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      {/* Gradient background */}
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden bg-background">
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.15) 0%, transparent 60%)",
+            "radial-gradient(ellipse at top, rgb(var(--color-long) / 0.16) 0%, transparent 60%)",
         }}
       />
 
       {/* Logo */}
       <Link
         href="/"
-        className="flex items-center gap-2.5 mb-8 group"
+        className="flex flex-col items-center mb-8 group"
       >
-        <div className="w-10 h-10 bg-purple rounded-xl flex items-center justify-center shadow-lg shadow-purple/30 group-hover:scale-105 transition-transform">
-          <Zap className="w-6 h-6 text-white" />
+        <div className="flex items-center gap-2.5">
+          <Activity className="w-7 h-7 text-long group-hover:scale-105 transition-transform" />
+          <div>
+            <span className="text-[2rem] leading-none font-bold text-text-primary">
+              Pulse
+            </span>
+            <span className="text-[2rem] leading-none font-bold text-long">
+              Signal
+            </span>
+          </div>
         </div>
-        <div>
-          <span className="text-xl font-bold text-text-primary">
-            PulseSignal
-          </span>
-          <span className="text-xl font-bold text-purple ml-1">Pro</span>
-        </div>
+        <p className="mt-2 text-sm text-text-muted">Sign in to your account</p>
       </Link>
 
       {/* Card */}

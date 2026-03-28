@@ -80,7 +80,7 @@ const defaultConfig: SystemConfig = {
   momentum_weight: 1,
   auth: {
     require_email_verification: true,
-    trial_hours: 24,
+    trial_hours: 24 * 30,
   },
   notifications: {
     enable_telegram_alerts: true,
@@ -403,10 +403,12 @@ export default function AdminConfigPage() {
       <Section title="Auth & Trial">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Input
-            label="Trial Duration (hours)"
+            label="Trial Duration (days)"
             type="number"
-            value={form.auth.trial_hours}
-            onChange={(v) => setAuth("trial_hours", Number(v))}
+            value={Math.max(1, Math.round((form.auth.trial_hours || (24 * 30)) / 24))}
+            onChange={(v) =>
+              setAuth("trial_hours", Math.max(1, Number(v) || 1) * 24)
+            }
           />
           <Input
             label="Min Signal Confidence"

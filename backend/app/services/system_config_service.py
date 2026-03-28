@@ -15,7 +15,7 @@ PROVIDER_HEALTH_REDIS_KEY = "admin:provider_health"
 
 class AuthConfig(BaseModel):
     require_email_verification: bool = True
-    trial_hours: int = Field(default=24, ge=1, le=168)
+    trial_hours: int = Field(default=24 * 30, ge=24, le=24 * 365)
 
 
 class NotificationConfig(BaseModel):

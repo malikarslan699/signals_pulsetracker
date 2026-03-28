@@ -2,6 +2,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { Panel } from "@/components/terminal/Panel";
+import { KPICard } from "@/components/terminal/KPIChip";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -13,7 +15,8 @@ import {
   BarChart,
   Bar,
 } from "recharts";
-import { Activity, Target, BarChart2, ShieldCheck } from "lucide-react";
+import { Activity, Target, BarChart2, ShieldCheck, TrendingUp } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 type SignalItem = {
   id: string;
@@ -51,7 +54,7 @@ function startOfDay(d: Date) {
 }
 
 export default function StatsPage() {
-  const [days, setDays] = useState<7 | 30 | 90>(30);
+  const [days, setDays] = useState<7 | 14 | 30 | 90>(30);
 
   const { data: stats, isLoading: statsLoading } = useQuery<PlatformStats>({
     queryKey: ["platform-stats", days],
@@ -64,7 +67,7 @@ export default function StatsPage() {
     queryFn: () =>
       api
         .get("/api/v1/signals/", {
-          params: { limit: 200, page: 1, min_confidence: 0 },
+          params: { limit: 100, page: 1, min_confidence: 0 },
         })
         .then((r) => r.data),
     refetchInterval: 60_000,
@@ -87,7 +90,7 @@ export default function StatsPage() {
       map.set(s.timeframe, (map.get(s.timeframe) || 0) + 1);
     }
     return Array.from(map.entries())
-      .map(([timeframe, count]) => ({ timeframe, count }))
+      .map(([tf, count]) => ({ tf, count }))
       .sort((a, b) => b.count - a.count);
   }, [filtered]);
 
@@ -101,7 +104,6 @@ export default function StatsPage() {
       const key = startOfDay(d).toISOString().slice(0, 10);
       map.set(key, { day: key.slice(5), total: 0, wins: 0, losses: 0 });
     }
-
     for (const s of filtered) {
       const key = startOfDay(new Date(s.fired_at)).toISOString().slice(0, 10);
       const row = map.get(key);
@@ -110,121 +112,147 @@ export default function StatsPage() {
       if (s.status.includes("tp")) row.wins += 1;
       if (s.status === "sl_hit") row.losses += 1;
     }
-
     return Array.from(map.values());
   }, [filtered]);
 
   const loading = statsLoading || signalsLoading;
 
   return (
-    <div className="space-y-6 pb-20 lg:pb-6">
+    <div className="p-3 space-y-3 pb-20 lg:pb-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary">Trading Stats</h1>
-          <p className="text-sm text-text-muted mt-0.5">
-            100% real platform data (no mock values)
-          </p>
-        </div>
-        <div className="flex items-center gap-1 bg-surface rounded-lg p-1 border border-border">
-          {[7, 30, 90].map((p) => (
+        <h1 className="text-sm font-semibold text-text-primary">Trading Stats</h1>
+        <div className="flex items-center gap-0.5">
+          {([7, 14, 30, 90] as const).map((r) => (
             <button
-              key={p}
-              onClick={() => setDays(p as 7 | 30 | 90)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                days === p ? "bg-purple text-white" : "text-text-muted hover:text-text-primary"
-              }`}
+              key={r}
+              onClick={() => setDays(r)}
+              className={cn("filter-pill", days === r && "filter-pill-active")}
             >
-              {p}d
+              {r}d
             </button>
           ))}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 text-xs text-text-muted mb-2">
-            <Target className="w-4 h-4" /> Win Rate
-          </div>
-          <p className="text-2xl font-bold font-mono text-long">
-            {loading ? "--" : `${localWinRate.toFixed(1)}%`}
-          </p>
-        </div>
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 text-xs text-text-muted mb-2">
-            <BarChart2 className="w-4 h-4" /> Signals ({days}d)
-          </div>
-          <p className="text-2xl font-bold font-mono text-text-primary">
-            {loading ? "--" : filtered.length}
-          </p>
-        </div>
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 text-xs text-text-muted mb-2">
-            <Activity className="w-4 h-4" /> Active Signals
-          </div>
-          <p className="text-2xl font-bold font-mono text-purple">
-            {stats?.active_signals ?? "--"}
-          </p>
-        </div>
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 text-xs text-text-muted mb-2">
-            <ShieldCheck className="w-4 h-4" /> Avg Confidence
-          </div>
-          <p className="text-2xl font-bold font-mono text-gold">
-            {stats ? `${stats.avg_confidence.toFixed(1)}%` : "--"}
-          </p>
-        </div>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KPICard
+          label="Win Rate"
+          value={loading ? "--" : `${localWinRate.toFixed(1)}%`}
+          icon={<TrendingUp className="h-3.5 w-3.5" />}
+          trend={localWinRate >= 50 ? "up" : "down"}
+          subtitle={`${wins}W / ${losses}L`}
+        />
+        <KPICard
+          label="Total Signals"
+          value={loading ? "--" : String(filtered.length)}
+          icon={<Activity className="h-3.5 w-3.5" />}
+          subtitle={`${days}-day period`}
+        />
+        <KPICard
+          label="Active"
+          value={stats?.active_signals ?? "--"}
+          icon={<Target className="h-3.5 w-3.5" />}
+          trend="up"
+        />
+        <KPICard
+          label="Avg Confidence"
+          value={stats ? `${stats.avg_confidence.toFixed(1)}%` : "--"}
+          icon={<ShieldCheck className="h-3.5 w-3.5" />}
+        />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-text-primary mb-4">Daily Signal Activity (14d)</h2>
-          {loading ? (
-            <div className="h-[240px] bg-surface-2 rounded animate-pulse" />
-          ) : dailySeries.every((d) => d.total === 0) ? (
-            <div className="h-[240px] flex items-center justify-center text-sm text-text-muted">
-              No real signals available yet.
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={dailySeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1F2937" />
-                <XAxis dataKey="day" tick={{ fill: "#6B7280", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#6B7280", fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{ background: "#111827", border: "1px solid #374151" }}
-                  labelStyle={{ color: "#9CA3AF" }}
-                />
-                <Area type="monotone" dataKey="total" stroke="#8B5CF6" fill="#8B5CF633" />
-                <Area type="monotone" dataKey="wins" stroke="#10B981" fill="#10B98122" />
-                <Area type="monotone" dataKey="losses" stroke="#EF4444" fill="#EF444422" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {/* Daily Activity Chart */}
+        <Panel title="Daily Activity (14d)" className="lg:col-span-2">
+          <div className="h-52">
+            {loading ? (
+              <div className="h-full bg-surface-2 rounded animate-pulse" />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={dailySeries}>
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fontSize: 10, fill: "rgb(107 114 128)" }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: "rgb(107 114 128)" }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={24}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "rgb(17 24 39)",
+                      border: "1px solid rgb(55 65 81)",
+                      borderRadius: "6px",
+                      fontSize: "11px",
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="wins"
+                    stackId="1"
+                    stroke="rgb(16 185 129)"
+                    fill="rgb(16 185 129)"
+                    fillOpacity={0.3}
+                    name="wins"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="losses"
+                    stackId="1"
+                    stroke="rgb(239 68 68)"
+                    fill="rgb(239 68 68)"
+                    fillOpacity={0.3}
+                    name="losses"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Panel>
 
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <h2 className="text-sm font-semibold text-text-primary mb-4">Signals by Timeframe</h2>
-          {loading ? (
-            <div className="h-[240px] bg-surface-2 rounded animate-pulse" />
-          ) : byTimeframe.length === 0 ? (
-            <div className="h-[240px] flex items-center justify-center text-sm text-text-muted">
-              No timeframe data available yet.
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={byTimeframe}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1F2937" />
-                <XAxis dataKey="timeframe" tick={{ fill: "#6B7280", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#6B7280", fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{ background: "#111827", border: "1px solid #374151" }}
-                  labelStyle={{ color: "#9CA3AF" }}
-                />
-                <Bar dataKey="count" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        {/* Timeframe Distribution */}
+        <Panel title="By Timeframe">
+          <div className="h-52">
+            {loading ? (
+              <div className="h-full bg-surface-2 rounded animate-pulse" />
+            ) : byTimeframe.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-sm text-text-muted">
+                No data yet
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={byTimeframe}>
+                  <XAxis
+                    dataKey="tf"
+                    tick={{ fontSize: 10, fill: "rgb(107 114 128)" }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: "rgb(107 114 128)" }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={24}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "rgb(17 24 39)",
+                      border: "1px solid rgb(55 65 81)",
+                      borderRadius: "6px",
+                      fontSize: "11px",
+                    }}
+                  />
+                  <Bar dataKey="count" fill="rgb(16 185 129)" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Panel>
       </div>
     </div>
   );

@@ -27,6 +27,15 @@ interface Candle {
   volume?: number;
 }
 
+interface CandleApi {
+  timestamp: number;
+  open: number | string;
+  high: number | string;
+  low: number | string;
+  close: number | string;
+  volume?: number | string;
+}
+
 export function TradingViewChart({
   symbol,
   timeframe,
@@ -37,15 +46,25 @@ export function TradingViewChart({
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
 
-  const { data: candles } = useQuery<Candle[]>({
+  const { data: candles, isLoading, isError, error, refetch } = useQuery<Candle[]>({
     queryKey: ["candles", symbol, timeframe],
     queryFn: async () => {
-      const res = await api.get<Candle[]>(
+      const res = await api.get<CandleApi[]>(
         `/api/v1/pairs/${symbol}/candles?timeframe=${timeframe}&limit=200`
       );
-      return res.data;
+      return (res.data || [])
+        .map((c) => ({
+          time: Math.floor(Number(c.timestamp) / 1000),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: c.volume != null ? Number(c.volume) : undefined,
+        }))
+        .filter((c) => Number.isFinite(c.time));
     },
     retry: false,
+    enabled: Boolean(symbol && timeframe),
   });
 
   useEffect(() => {
@@ -199,7 +218,7 @@ export function TradingViewChart({
     };
   }, [candles, signal, height]);
 
-  if (!candles || candles.length === 0) {
+  if (isLoading) {
     return (
       <div
         className="flex items-center justify-center bg-surface-2 text-text-muted text-sm"
@@ -209,6 +228,35 @@ export function TradingViewChart({
           <div className="w-8 h-8 border-2 border-border border-t-purple rounded-full animate-spin" />
           <span>Loading chart data...</span>
         </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    const detail =
+      (error as any)?.response?.data?.detail ||
+      (error as Error | undefined)?.message ||
+      "Unable to load chart candles.";
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-2 bg-surface-2 text-text-muted text-xs p-3"
+        style={{ height }}
+      >
+        <span>{detail}</span>
+        <button onClick={() => refetch()} className="filter-pill">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!candles || candles.length === 0) {
+    return (
+      <div
+        className="flex items-center justify-center bg-surface-2 text-text-muted text-sm"
+        style={{ height }}
+      >
+        No chart candles available.
       </div>
     );
   }

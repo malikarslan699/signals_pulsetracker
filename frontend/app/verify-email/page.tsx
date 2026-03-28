@@ -28,7 +28,7 @@ export default function VerifyEmailPage() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-8 text-center">
+      <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-8 text-center shadow-2xl">
         {isLoading ? (
           <div className="space-y-3">
             <Loader2 className="w-10 h-10 mx-auto text-blue animate-spin" />
@@ -43,7 +43,7 @@ export default function VerifyEmailPage() {
             </p>
             <Link
               href="/login"
-              className="inline-block mt-2 px-4 py-2 bg-purple text-white rounded-lg text-sm"
+              className="inline-block mt-2 px-4 py-2 bg-long text-white rounded-lg text-sm"
             >
               Back to Login
             </Link>
@@ -57,7 +57,7 @@ export default function VerifyEmailPage() {
             </p>
             <Link
               href="/login"
-              className="inline-block mt-2 px-4 py-2 bg-purple text-white rounded-lg text-sm"
+              className="inline-block mt-2 px-4 py-2 bg-long text-white rounded-lg text-sm"
             >
               Continue to Login
             </Link>

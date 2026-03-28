@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -39,6 +39,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.services.mailer import build_verification_email, send_email
+from app.services.package_config_service import get_package, load_packages_config
 from app.services.system_config_service import load_system_config
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -60,39 +61,68 @@ async def register(
     redis: RedisClient = Depends(get_redis_client),
 ) -> TokenResponse:
     """
-    Create a new user account. The account starts on a 24-hour trial plan.
+    Create a new user account. The account starts on a 30-day trial plan.
     Returns access and refresh JWT tokens.
     """
     # Check email uniqueness
-    result = await db.execute(select(User).where(User.email == payload.email))
+    normalized_email = payload.email.strip().lower()
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
     if result.scalar_one_or_none():
         raise ConflictError("An account with this email already exists.")
 
-    # Check username uniqueness
-    result = await db.execute(select(User).where(User.username == payload.username))
-    if result.scalar_one_or_none():
-        raise ConflictError("This username is already taken.")
-
     config = await load_system_config(redis)
 
-    # Create user with configurable trial window (default: 24h)
-    trial_expires = datetime.now(tz=timezone.utc) + timedelta(
-        hours=config.auth.trial_hours
-    )
-    user = User(
-        email=payload.email,
-        username=payload.username,
-        password_hash=get_password_hash(payload.password),
-        role="user",
-        plan="trial",
-        plan_expires_at=trial_expires,
-        is_active=True,
-        is_verified=False,
-    )
-    db.add(user)
-    await db.flush()
+    # Create user with configurable trial window.
+    # Source of truth priority:
+    # 1) Trial package duration_days (admin packages page)
+    # 2) System auth trial_hours (admin config page)
+    trial_hours = int(config.auth.trial_hours or (24 * 30))
+    try:
+        packages_config = await load_packages_config(redis)
+        trial_pkg = get_package(packages_config, "trial")
+        if trial_pkg and trial_pkg.duration_days and trial_pkg.duration_days > 0:
+            trial_hours = int(trial_pkg.duration_days * 24)
+    except Exception:
+        pass
 
-    logger.info(f"New user registered: {user.email} (id={user.id})")
+    trial_expires = datetime.now(tz=timezone.utc) + timedelta(hours=trial_hours)
+
+    # Check username uniqueness (allow recycle when account is still unverified)
+    result = await db.execute(select(User).where(User.username == payload.username))
+    existing_username_user: Optional[User] = result.scalar_one_or_none()
+
+    if existing_username_user and existing_username_user.is_verified:
+        raise ConflictError("This username is already taken.")
+
+    if existing_username_user and not existing_username_user.is_verified:
+        user = existing_username_user
+        user.email = normalized_email
+        user.password_hash = get_password_hash(payload.password)
+        user.role = "user"
+        user.plan = "trial"
+        user.plan_expires_at = trial_expires
+        user.is_active = True
+        user.is_verified = False
+        await db.flush()
+        logger.info(
+            f"Recovered unverified registration: username={user.username} id={user.id}"
+        )
+    else:
+        user = User(
+            email=normalized_email,
+            username=payload.username,
+            password_hash=get_password_hash(payload.password),
+            role="user",
+            plan="trial",
+            plan_expires_at=trial_expires,
+            is_active=True,
+            is_verified=False,
+        )
+        db.add(user)
+        await db.flush()
+        logger.info(f"New user registered: {user.email} (id={user.id})")
 
     require_verification = bool(config.auth.require_email_verification)
 
@@ -154,7 +184,10 @@ async def login(
     """
     Verify credentials, check account status, bind device fingerprint, return tokens.
     """
-    result = await db.execute(select(User).where(User.email == payload.email))
+    normalized_email = payload.email.strip().lower()
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
     user: Optional[User] = result.scalar_one_or_none()
 
     if user is None or not verify_password(payload.password, user.password_hash):
@@ -355,7 +388,10 @@ async def resend_verification(
     db: AsyncSession = Depends(get_db),
     redis: RedisClient = Depends(get_redis_client),
 ) -> dict:
-    result = await db.execute(select(User).where(User.email == payload.email))
+    normalized_email = payload.email.strip().lower()
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
     user: Optional[User] = result.scalar_one_or_none()
 
     # Generic response to avoid account enumeration.
@@ -473,10 +509,11 @@ async def connect_telegram(
 # ---------------------------------------------------------------------------
 # POST /forgot-password — send OTP to email if it exists in DB
 # ---------------------------------------------------------------------------
-class ForgotPasswordRequest(BaseModel):
+class ForgotPasswordOtpRequest(BaseModel):
     email: EmailStr
 
-class ResetPasswordRequest(BaseModel):
+
+class ResetPasswordOtpRequest(BaseModel):
     email: EmailStr
     otp: str
     new_password: str
@@ -484,7 +521,7 @@ class ResetPasswordRequest(BaseModel):
 
 @router.post("/forgot-password", summary="Request a password reset OTP")
 async def forgot_password(
-    payload: ForgotPasswordRequest,
+    payload: ForgotPasswordOtpRequest,
     db: AsyncSession = Depends(get_db),
     redis: RedisClient = Depends(get_redis_client),
 ) -> dict:
@@ -492,14 +529,21 @@ async def forgot_password(
     If the email exists in the database, send a 6-digit OTP to it.
     Always returns the same response to avoid leaking whether the email exists.
     """
-    result = await db.execute(select(User).where(User.email == payload.email))
+    generic = {
+        "message": "If the email exists, an OTP has been sent. It expires in 10 minutes."
+    }
+
+    normalized_email = payload.email.strip().lower()
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
     user: Optional[User] = result.scalar_one_or_none()
 
     if not user:
-        raise NotFoundError("No account found with this email address. Please check and try again.")
+        return generic
 
     otp = str(secrets.randbelow(900000) + 100000)  # 6-digit
-    redis_key = f"auth:password_reset:{payload.email}"
+    redis_key = f"auth:password_reset:{normalized_email}"
     await redis._r.set(redis_key, otp, ex=600)  # 10 minutes
 
     try:
@@ -516,17 +560,17 @@ async def forgot_password(
             f"<p>This code expires in <b>10 minutes</b>.</p>"
             f"<p style='color:#888'>If you did not request a password reset, ignore this email.</p>"
         )
-        await send_email(smtp_cfg.smtp, payload.email, subject, text_body, html_body)
-        logger.info(f"Password reset OTP sent to {payload.email}")
+        await send_email(smtp_cfg.smtp, normalized_email, subject, text_body, html_body)
+        logger.info(f"Password reset OTP sent to {normalized_email}")
     except Exception as e:
-        logger.warning(f"Could not send reset OTP to {payload.email}: {e}")
+        logger.warning(f"Could not send reset OTP to {normalized_email}: {e}")
 
-    return {"message": "OTP has been sent to your email. It expires in 10 minutes."}
+    return generic
 
 
 @router.post("/reset-password", summary="Reset password using OTP")
 async def reset_password(
-    payload: ResetPasswordRequest,
+    payload: ResetPasswordOtpRequest,
     db: AsyncSession = Depends(get_db),
     redis: RedisClient = Depends(get_redis_client),
 ) -> dict:
@@ -536,13 +580,16 @@ async def reset_password(
     if len(payload.new_password) < 8:
         raise ValidationError("Password must be at least 8 characters.")
 
-    redis_key = f"auth:password_reset:{payload.email}"
+    normalized_email = payload.email.strip().lower()
+    redis_key = f"auth:password_reset:{normalized_email}"
     stored_otp = await redis._r.get(redis_key)
 
     if not stored_otp or stored_otp != payload.otp:
         raise AuthenticationError("Invalid or expired OTP.")
 
-    result = await db.execute(select(User).where(User.email == payload.email))
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
     user: Optional[User] = result.scalar_one_or_none()
 
     if not user:

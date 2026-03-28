@@ -1,6 +1,8 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { Panel } from "@/components/terminal/Panel";
+import { KPICard } from "@/components/terminal/KPIChip";
 import { BarChart2, Target, Activity } from "lucide-react";
 
 interface SignalsAnalytics {
@@ -21,80 +23,101 @@ interface SignalsAnalytics {
 export default function AdminAnalyticsPage() {
   const { data, isLoading, isError } = useQuery<SignalsAnalytics>({
     queryKey: ["admin-signals-analytics"],
-    queryFn: () => api.get("/api/v1/admin/analytics/signals?days=30").then((r) => r.data),
+    queryFn: () =>
+      api.get("/api/v1/admin/analytics/signals?days=30").then((r) => r.data),
     refetchInterval: 60_000,
   });
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 text-text-muted text-xs mb-2">
-            <BarChart2 className="w-4 h-4" />
-            Total Signals (30d)
-          </div>
-          <p className="text-2xl font-mono font-bold text-text-primary">
-            {data?.total_signals ?? 0}
-          </p>
-        </div>
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 text-text-muted text-xs mb-2">
-            <Target className="w-4 h-4" />
-            Avg Confidence
-          </div>
-          <p className="text-2xl font-mono font-bold text-gold">
-            {data?.avg_confidence ?? 0}%
-          </p>
-        </div>
-        <div className="bg-surface border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 text-text-muted text-xs mb-2">
-            <Activity className="w-4 h-4" />
-            Top Symbol Count
-          </div>
-          <p className="text-2xl font-mono font-bold text-purple">
-            {data?.top_symbols?.[0]?.signal_count ?? 0}
-          </p>
-        </div>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <KPICard
+          label="Total Signals (30d)"
+          value={isLoading ? "--" : String(data?.total_signals ?? 0)}
+          icon={<Activity className="h-3.5 w-3.5" />}
+        />
+        <KPICard
+          label="Avg Confidence"
+          value={isLoading ? "--" : `${data?.avg_confidence ?? 0}%`}
+          icon={<Target className="h-3.5 w-3.5" />}
+        />
+        <KPICard
+          label="Top Symbol"
+          value={isLoading ? "--" : (data?.top_symbols?.[0]?.symbol ?? "—")}
+          icon={<BarChart2 className="h-3.5 w-3.5" />}
+          subtitle={data?.top_symbols?.[0] ? `${data.top_symbols[0].signal_count} signals` : undefined}
+        />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-surface border border-border rounded-xl p-5">
-          <h2 className="font-semibold text-text-primary mb-4">By Timeframe</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {/* By Timeframe */}
+        <Panel title="By Timeframe" noPad>
+          <div className="grid grid-cols-[60px_1fr_60px_60px] px-3 py-1 text-2xs font-semibold text-text-muted uppercase border-b border-border">
+            <span>TF</span>
+            <span>Signals</span>
+            <span className="text-right">Win Rate</span>
+            <span className="text-right">Count</span>
+          </div>
           {isLoading ? (
-            <p className="text-sm text-text-muted">Loading...</p>
-          ) : isError ? (
-            <p className="text-sm text-short">Failed to load analytics.</p>
-          ) : (
-            <div className="space-y-3">
-              {(data?.by_timeframe || []).map((row) => (
-                <div key={row.timeframe} className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">{row.timeframe}</span>
-                  <span className="font-mono text-text-primary">{row.count}</span>
-                </div>
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-6 bg-surface-2 rounded animate-pulse" />
               ))}
             </div>
+          ) : isError ? (
+            <div className="px-3 py-4 text-xs text-short">Failed to load analytics.</div>
+          ) : (
+            (data?.by_timeframe || []).map((row) => (
+              <div
+                key={row.timeframe}
+                className="grid grid-cols-[60px_1fr_60px_60px] px-3 py-1.5 border-b border-border last:border-0 text-xs"
+              >
+                <span className="font-mono text-text-primary">{row.timeframe}</span>
+                <div className="flex items-center pr-2">
+                  <div className="h-1 bg-surface-2 rounded-full flex-1 overflow-hidden">
+                    <div
+                      className="h-full bg-purple rounded-full"
+                      style={{
+                        width: `${Math.min(100, (row.count / (data?.total_signals || 1)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+                <span className="font-mono text-text-muted text-right">—</span>
+                <span className="font-mono text-text-primary text-right">{row.count}</span>
+              </div>
+            ))
           )}
-        </div>
+        </Panel>
 
-        <div className="bg-surface border border-border rounded-xl p-5">
-          <h2 className="font-semibold text-text-primary mb-4">Top Symbols</h2>
+        {/* Top Symbols */}
+        <Panel title="Top Symbols" noPad>
+          <div className="grid grid-cols-[1fr_60px_60px] px-3 py-1 text-2xs font-semibold text-text-muted uppercase border-b border-border">
+            <span>Symbol</span>
+            <span className="text-right">Signals</span>
+            <span className="text-right">Win Rate</span>
+          </div>
           {isLoading ? (
-            <p className="text-sm text-text-muted">Loading...</p>
-          ) : isError ? (
-            <p className="text-sm text-short">Failed to load analytics.</p>
-          ) : (
-            <div className="space-y-3">
-              {(data?.top_symbols || []).slice(0, 10).map((row) => (
-                <div key={row.symbol} className="flex items-center justify-between text-sm">
-                  <span className="text-text-secondary">{row.symbol}</span>
-                  <span className="font-mono text-text-primary">
-                    {row.signal_count} | WR {row.win_rate_pct}%
-                  </span>
-                </div>
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-6 bg-surface-2 rounded animate-pulse" />
               ))}
             </div>
+          ) : isError ? (
+            <div className="px-3 py-4 text-xs text-short">Failed to load analytics.</div>
+          ) : (
+            (data?.top_symbols || []).slice(0, 10).map((row) => (
+              <div
+                key={row.symbol}
+                className="grid grid-cols-[1fr_60px_60px] px-3 py-1.5 border-b border-border last:border-0 text-xs"
+              >
+                <span className="font-medium text-text-primary font-mono">{row.symbol}</span>
+                <span className="font-mono text-text-primary text-right">{row.signal_count}</span>
+                <span className="font-mono text-long text-right">{row.win_rate_pct}%</span>
+              </div>
+            ))
           )}
-        </div>
+        </Panel>
       </div>
     </div>
   );

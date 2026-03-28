@@ -7,40 +7,58 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+COMMON_EMAIL_DOMAIN_TYPOS: dict[str, str] = {
+    "gamil.com": "gmail.com",
+    "gmai.com": "gmail.com",
+    "gmail.co": "gmail.com",
+    "gmail.con": "gmail.com",
+    "gmaill.com": "gmail.com",
+    "gmial.com": "gmail.com",
+    "gnail.com": "gmail.com",
+    "hotnail.com": "hotmail.com",
+    "hotmai.com": "hotmail.com",
+    "yaho.com": "yahoo.com",
+    "yhoo.com": "yahoo.com",
+    "outlok.com": "outlook.com",
+    "outllok.com": "outlook.com",
+}
+
+
+def _validate_email_domain_typos(value: EmailStr) -> str:
+    email = str(value).strip().lower()
+    if "@" not in email:
+        return str(value)
+
+    _local, domain = email.rsplit("@", 1)
+    suggestion = COMMON_EMAIL_DOMAIN_TYPOS.get(domain)
+    if suggestion:
+        raise ValueError(
+            f"Email domain '{domain}' looks incorrect. Did you mean '{suggestion}'?"
+        )
+    return email
+
 
 class UserCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     email: EmailStr
-    username: str = Field(
-        min_length=3,
-        max_length=50,
-        pattern=r"^[a-zA-Z0-9_.-]+$",
-        description="3–50 chars, alphanumeric, underscore, dot or dash only",
-    )
-    password: str = Field(min_length=8, max_length=128)
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=128)
 
-    @field_validator("password")
+    @field_validator("email")
     @classmethod
-    def validate_password_strength(cls, v: str) -> str:
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Password must contain at least one uppercase letter.")
-        if not re.search(r"\d", v):
-            raise ValueError("Password must contain at least one digit.")
-        return v
-
-    @field_validator("username")
-    @classmethod
-    def validate_username_reserved(cls, v: str) -> str:
-        reserved = {"admin", "root", "superuser", "system", "support", "pulsesignal"}
-        if v.lower() in reserved:
-            raise ValueError(f"Username '{v}' is reserved.")
-        return v
+    def validate_email_domain(cls, v: EmailStr) -> str:
+        return _validate_email_domain_typos(v)
 
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, v: EmailStr) -> str:
+        return _validate_email_domain_typos(v)
 
 
 class UserResponse(BaseModel):
@@ -129,9 +147,19 @@ class PasswordChangeRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, v: EmailStr) -> str:
+        return _validate_email_domain_typos(v)
+
 
 class EmailVerificationRequest(BaseModel):
     email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, v: EmailStr) -> str:
+        return _validate_email_domain_typos(v)
 
 
 class ResetPasswordRequest(BaseModel):

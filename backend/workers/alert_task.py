@@ -156,16 +156,47 @@ async def _send_signal_alerts_async(signal_id: str) -> dict:
         # Try to find signal in Redis
         signal_data = None
 
-        # Search in active signals
-        active_signals_raw = r.zrange('signals:active', 0, -1)
-        for raw in active_signals_raw:
+        # 1) Fast path: canonical id-key cache
+        raw_by_id = r.get(f'signal:id:{signal_id}')
+        if raw_by_id:
             try:
-                sig = json_lib.loads(raw)
-                if sig.get('id') == signal_id:
-                    signal_data = sig
-                    break
+                signal_data = json_lib.loads(raw_by_id)
             except Exception:
-                pass
+                signal_data = None
+
+        # 2) Canonical symbol-key cache referenced by active_signals zset
+        if not signal_data:
+            active_symbols = r.zrange('active_signals', 0, -1)
+            for symbol_raw in active_symbols:
+                try:
+                    symbol = (
+                        symbol_raw.decode()
+                        if isinstance(symbol_raw, (bytes, bytearray))
+                        else str(symbol_raw)
+                    )
+                    payload = r.get(f'signal:{symbol}')
+                    if not payload:
+                        continue
+                    sig = json_lib.loads(payload)
+                    if str(sig.get('id')) == str(signal_id):
+                        signal_data = sig
+                        break
+                except Exception:
+                    pass
+
+        # 3) Legacy fallback: JSON members stored directly in signals:active
+        if not signal_data:
+            active_signals_raw = r.zrange('signals:active', 0, -1)
+            for raw in active_signals_raw:
+                try:
+                    sig = json_lib.loads(raw)
+                    if str(sig.get('id')) == str(signal_id):
+                        signal_data = sig
+                        # Warm id-key cache for future lookups.
+                        r.set(f'signal:id:{signal_id}', json_lib.dumps(sig), ex=86400)
+                        break
+                except Exception:
+                    pass
 
         if not signal_data:
             # Fallback: get from DB

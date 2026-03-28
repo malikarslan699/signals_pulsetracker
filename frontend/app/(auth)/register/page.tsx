@@ -4,20 +4,62 @@ import Link from "next/link";
 import { Eye, EyeOff, UserPlus, AlertCircle } from "lucide-react";
 import { useRegister } from "@/hooks/useAuth";
 
+const COMMON_EMAIL_DOMAIN_TYPOS: Record<string, string> = {
+  "gamil.com": "gmail.com",
+  "gmai.com": "gmail.com",
+  "gmail.co": "gmail.com",
+  "gmail.con": "gmail.com",
+  "gmaill.com": "gmail.com",
+  "gmial.com": "gmail.com",
+  "gnail.com": "gmail.com",
+  "hotnail.com": "hotmail.com",
+  "hotmai.com": "hotmail.com",
+  "yaho.com": "yahoo.com",
+  "yhoo.com": "yahoo.com",
+  "outlok.com": "outlook.com",
+  "outllok.com": "outlook.com",
+};
+
+function getDomainSuggestion(email: string): string | null {
+  const parts = email.split("@");
+  if (parts.length !== 2) return null;
+  const domain = parts[1].toLowerCase();
+  return COMMON_EMAIL_DOMAIN_TYPOS[domain] || null;
+}
+
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
+  const [confirmEmail, setConfirmEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const { mutate: register, isPending, error } = useRegister();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    register({ username, email, password });
+    setFormError(null);
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedConfirmEmail = confirmEmail.trim().toLowerCase();
+    const suggestion = getDomainSuggestion(normalizedEmail);
+
+    if (suggestion) {
+      setFormError(`Email domain looks incorrect. Did you mean ${suggestion}?`);
+      return;
+    }
+
+    if (normalizedEmail !== normalizedConfirmEmail) {
+      setFormError("Email and confirm email do not match.");
+      return;
+    }
+
+    register({ username: username.trim(), email: normalizedEmail, password });
   };
 
   const errorMessage =
+    formError ||
     (error as any)?.response?.data?.detail ||
     (error as any)?.response?.data?.message ||
     (error ? "Registration failed. Please try again." : null);
@@ -56,7 +98,7 @@ export default function RegisterPage() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="tradingpro"
-            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple transition-colors"
+            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-long transition-colors"
           />
         </div>
 
@@ -74,9 +116,35 @@ export default function RegisterPage() {
             autoComplete="email"
             required
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (formError) setFormError(null);
+            }}
             placeholder="you@example.com"
-            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple transition-colors"
+            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-long transition-colors"
+          />
+        </div>
+
+        {/* Confirm Email */}
+        <div>
+          <label
+            htmlFor="confirm-email"
+            className="block text-xs font-medium text-text-secondary mb-1.5"
+          >
+            Confirm Email
+          </label>
+          <input
+            id="confirm-email"
+            type="email"
+            autoComplete="email"
+            required
+            value={confirmEmail}
+            onChange={(e) => {
+              setConfirmEmail(e.target.value);
+              if (formError) setFormError(null);
+            }}
+            placeholder="retype your email"
+            className="w-full px-4 py-2.5 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-long transition-colors"
           />
         </div>
 
@@ -98,7 +166,7 @@ export default function RegisterPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Min. 8 characters"
-              className="w-full px-4 py-2.5 pr-10 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-purple transition-colors"
+              className="w-full px-4 py-2.5 pr-10 bg-surface-2 border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-long transition-colors"
             />
             <button
               type="button"
@@ -118,7 +186,7 @@ export default function RegisterPage() {
         <button
           type="submit"
           disabled={isPending}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-purple hover:bg-purple/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all shadow-lg shadow-purple/20 mt-2"
+          className="w-full flex items-center justify-center gap-2 py-3 bg-long hover:bg-long/90 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all shadow-lg shadow-long/20 mt-2"
         >
           {isPending ? (
             <>
@@ -138,7 +206,7 @@ export default function RegisterPage() {
         Already have an account?{" "}
         <Link
           href="/login"
-          className="text-purple hover:text-purple/80 font-medium transition-colors"
+          className="text-long hover:text-long/80 font-medium transition-colors"
         >
           Sign in
         </Link>

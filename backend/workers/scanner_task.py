@@ -7,6 +7,7 @@ generates signals, stores in DB and Redis.
 import asyncio
 import time
 import logging
+import json
 from datetime import datetime, timezone
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -90,12 +91,64 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
 
 
+def _get_scan_min_confidence(default: int = 60) -> int:
+    """
+    Read scanner min confidence from runtime system config (Redis).
+    Falls back to `default` on any error.
+    """
+    try:
+        import redis
+
+        r = redis.from_url(
+            os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
+            decode_responses=True,
+        )
+        raw = r.get('admin:system_config')
+        if not raw:
+            return default
+        payload = json.loads(raw)
+        value = int(payload.get('min_signal_confidence', default) or default)
+        return max(0, min(100, value))
+    except Exception:
+        return default
+
+
+def _has_twelvedata_key() -> bool:
+    """
+    Return True if TwelveData API key is configured (env or runtime config).
+    """
+    env_key = (os.getenv("TWELVEDATA_API_KEY", "") or "").strip()
+    if env_key:
+        return True
+    try:
+        import redis
+
+        r = redis.from_url(
+            os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
+            decode_responses=True,
+        )
+        raw = r.get('admin:system_config')
+        if not raw:
+            return False
+        payload = json.loads(raw)
+        key = (
+            payload.get("integrations", {})
+            .get("twelvedata_api_key", "")
+        )
+        return bool(str(key or "").strip())
+    except Exception:
+        return False
+
+
 def _update_scanner_progress(signals_added: int = 0) -> None:
     """Increment scanner progress counters in Redis."""
     try:
         import redis
 
-        r = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+        r = redis.from_url(
+            os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
+            decode_responses=True,
+        )
         status = (r.hget('scanner:status', 'status') or '').strip().lower()
         if status != 'running':
             return
@@ -161,7 +214,17 @@ def scan_market(self, market: str = 'crypto'):
     if market == 'crypto':
         pairs = _run_async(_resolve_crypto_pairs())
     else:
+        if not _has_twelvedata_key():
+            logger.warning("[SCANNER] FOREX scan skipped: TWELVEDATA_API_KEY is not configured.")
+            return {
+                'market': market,
+                'pairs_submitted': 0,
+                'errors': 0,
+                'skipped': True,
+                'reason': 'twelvedata_api_key_missing',
+            }
         pairs = FOREX_PAIRS
+    min_confidence = _get_scan_min_confidence(default=60)
     signals_found = 0
     errors = 0
 
@@ -191,7 +254,11 @@ def scan_market(self, market: str = 'crypto'):
         for symbol in batch:
             try:
                 scan_symbol.apply_async(
-                    kwargs={'symbol': symbol, 'market': market},
+                    kwargs={
+                        'symbol': symbol,
+                        'market': market,
+                        'min_confidence': min_confidence,
+                    },
                     queue='scanner',
                     countdown=0,
                 )
@@ -215,13 +282,18 @@ def scan_market(self, market: str = 'crypto'):
 
 @app.task(bind=True, name='workers.scanner_task.scan_symbol',
           max_retries=3, default_retry_delay=30)
-def scan_symbol(self, symbol: str, market: str = 'crypto'):
+def scan_symbol(
+    self,
+    symbol: str,
+    market: str = 'crypto',
+    min_confidence: int = 60,
+):
     """
     Scan a single symbol across all timeframes.
     Generates signals and stores in DB/Redis.
     """
     try:
-        result = _run_async(_scan_symbol_async(symbol, market))
+        result = _run_async(_scan_symbol_async(symbol, market, min_confidence))
         return result
     except Exception as exc:
         logger.error(f"Error scanning {symbol}: {exc}")
@@ -231,7 +303,11 @@ def scan_symbol(self, symbol: str, market: str = 'crypto'):
             return {'symbol': symbol, 'error': str(exc), 'signals': 0}
 
 
-async def _scan_symbol_async(symbol: str, market: str) -> dict:
+async def _scan_symbol_async(
+    symbol: str,
+    market: str,
+    min_confidence: int = 60,
+) -> dict:
     """Async implementation of symbol scanning"""
     signals_generated = []
     fetcher = None
@@ -242,6 +318,7 @@ async def _scan_symbol_async(symbol: str, market: str) -> dict:
 
         fetcher = BinanceDataFetcher() if market == 'crypto' else ForexDataFetcher()
         generator = SignalGenerator()
+        generator.MIN_CONFIDENCE = max(0, min(100, int(min_confidence or 60)))
 
         # Fetch candles for all timeframes
         candles_by_tf = {}
@@ -368,12 +445,14 @@ async def _store_signal(signal) -> bool:
             'confidence_band': signal.confidence_band,
             'top_confluences': signal.top_confluences[:5],
             'fired_at': signal.fired_at,
+            'expires_at': getattr(signal, 'expires_at', None),
         }
 
         # Store as latest signal for symbol
         signal_payload = json.dumps(signal_dict, default=_json_default)
         r.set(f'signal:latest:{signal.symbol}:{signal.timeframe}',
               signal_payload, ex=86400)
+        r.set(f'signal:id:{signal.id}', signal_payload, ex=86400)
 
         # Add to active signals sorted set (score = confidence)
         r.zadd('signals:active', {signal_payload: signal.confidence})
@@ -558,20 +637,21 @@ def update_signal_statuses():
                         new_status = 'sl_hit'
 
                 # ── Expiry check ────────────────────────────────────────
-                # If signal has passed its expires_at, mark as expired
+                # Only expire when an explicit expires_at is present.
                 if not new_status:
-                    expires_at_raw = signal.get('expires_at') or signal.get('fired_at')
-                    try:
-                        from datetime import datetime as _dt, timezone as _tz
-                        expires_dt = _dt.fromisoformat(
-                            str(expires_at_raw).replace('Z', '+00:00')
-                        )
-                        if expires_dt.tzinfo is None:
-                            expires_dt = expires_dt.replace(tzinfo=_tz.utc)
-                        if _dt.now(_tz.utc) > expires_dt:
-                            new_status = 'expired'
-                    except Exception:
-                        pass
+                    expires_at_raw = signal.get('expires_at')
+                    if expires_at_raw:
+                        try:
+                            from datetime import datetime as _dt, timezone as _tz
+                            expires_dt = _dt.fromisoformat(
+                                str(expires_at_raw).replace('Z', '+00:00')
+                            )
+                            if expires_dt.tzinfo is None:
+                                expires_dt = expires_dt.replace(tzinfo=_tz.utc)
+                            if _dt.now(_tz.utc) > expires_dt:
+                                new_status = 'expired'
+                        except Exception:
+                            pass
 
                 if new_status:
                     # Update in DB
@@ -602,6 +682,9 @@ def update_signal_statuses():
                         r.zrem('signals:active', raw)
                         r.zrem('active_signals', symbol)
                         r.delete(f'signal:{symbol}')
+                        signal_id = signal.get('id')
+                        if signal_id:
+                            r.delete(f'signal:id:{signal_id}')
 
                         logger.info(f"Signal {signal.get('id')} -> {new_status} at {current_price}")
                     except Exception as e:

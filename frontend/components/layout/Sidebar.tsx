@@ -31,7 +31,7 @@ const BASE_NAV_ITEMS = [
 const PLAN_COLORS: Record<string, string> = {
   free: "bg-surface-2 text-text-muted border-border",
   trial: "bg-blue/10 text-blue border-blue/20",
-  monthly: "bg-purple/10 text-purple border-purple/20",
+  monthly: "bg-long/10 text-long border-long/20",
   lifetime: "bg-gold/10 text-gold border-gold/20",
 };
 
@@ -49,13 +49,13 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       {/* Logo */}
       <div className="flex items-center justify-between px-6 py-5 border-b border-border">
         <Link href="/dashboard" className="flex items-center gap-2.5" onClick={onClose}>
-          <div className="w-8 h-8 bg-purple rounded-lg flex items-center justify-center">
+          <div className="w-8 h-8 bg-long rounded-lg flex items-center justify-center">
             <Zap className="w-5 h-5 text-white" />
           </div>
           <span className="font-bold text-text-primary text-sm leading-tight">
             PulseSignal
             <br />
-            <span className="text-purple">Pro</span>
+            <span className="text-long">Pro</span>
           </span>
         </Link>
         <button
@@ -79,7 +79,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               onClick={onClose}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
                 isActive
-                  ? "bg-purple/15 text-purple border border-purple/25 shadow-sm"
+                  ? "bg-long/15 text-long border border-long/25 shadow-sm"
                   : "text-text-muted hover:text-text-primary hover:bg-surface-2 border border-transparent"
               }`}
             >
@@ -94,7 +94,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       {user && (
         <div className="px-4 py-4 border-t border-border">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-purple/20 border border-purple/30 flex items-center justify-center text-purple text-xs font-bold uppercase flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-long/20 border border-long/30 flex items-center justify-center text-long text-xs font-bold uppercase flex-shrink-0">
               {user.username.slice(0, 2)}
             </div>
             <div className="flex-1 min-w-0">

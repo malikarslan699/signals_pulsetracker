@@ -2,12 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 export interface ScannerStatus {
-  status: "active" | "idle" | "scanning";
-  last_scan?: string;
-  next_scan?: string;
-  pairs_scanned?: number;
-  signals_found?: number;
-  is_running?: boolean;
+  is_running: boolean;
+  current_market?: string | null;
+  pairs_total: number;
+  pairs_done: number;
+  signals_found_this_run: number;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  queue_length: number;
+  uptime_seconds?: number | null;
 }
 
 export interface ScannerResult {
@@ -16,6 +19,13 @@ export interface ScannerResult {
   signals_count: number;
   last_signal?: string;
   confidence?: number;
+}
+
+interface ScannerResultsResponse {
+  results: ScannerResult[];
+  count: number;
+  min_confidence: number;
+  market_filter?: string;
 }
 
 interface UseScannerResultsOptions {
@@ -41,10 +51,10 @@ export function useScannerResults(options: UseScannerResultsOptions = {}) {
   if (options.timeframe) params.set("timeframe", options.timeframe);
   if (options.limit !== undefined) params.set("limit", options.limit.toString());
 
-  return useQuery<ScannerResult[]>({
+  return useQuery<ScannerResultsResponse>({
     queryKey: ["scanner", "results", options],
     queryFn: async () => {
-      const res = await api.get<ScannerResult[]>(
+      const res = await api.get<ScannerResultsResponse>(
         `/api/v1/scanner/results?${params.toString()}`
       );
       return res.data;

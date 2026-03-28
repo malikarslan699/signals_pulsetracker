@@ -1,5 +1,6 @@
-import { cn } from "@/lib/utils";
+"use client";
 import { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 interface PanelProps {
   title?: string;
@@ -18,9 +19,7 @@ export function Panel({ title, actions, children, className, noPad }: PanelProps
           {actions && <div className="flex items-center gap-1">{actions}</div>}
         </div>
       )}
-      <div className={cn(!noPad && "p-3")}>
-        {children}
-      </div>
+      <div className={cn(!noPad && "p-3")}>{children}</div>
     </div>
   );
 }

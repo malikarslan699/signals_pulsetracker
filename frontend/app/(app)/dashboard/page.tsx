@@ -1,133 +1,113 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { RefreshCw, Activity, TrendingUp, Target, Crosshair, Clock, Zap } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { RefreshCw, Zap } from "lucide-react";
 import { useSignals } from "@/hooks/useSignals";
 import { useScanner } from "@/hooks/useScanner";
+import { SignalRow } from "@/components/signals/SignalRow";
+import { ScannerStatus } from "@/components/scanner/ScannerStatus";
+import { StatsRow } from "@/components/dashboard/StatsRow";
 import { MarketHeatmap } from "@/components/dashboard/MarketHeatmap";
 import { LiveTicker } from "@/components/layout/LiveTicker";
-import { KPIChip } from "@/components/terminal/KPIChip";
 import { Panel } from "@/components/terminal/Panel";
-import { DirectionBadge, StatusBadge } from "@/components/terminal/Badges";
-import { ConfidenceBar } from "@/components/terminal/ConfidenceBar";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { PlatformStats } from "@/types/signal";
-import { formatPrice, formatTimeAgo } from "@/lib/formatters";
-
-const COL = "grid-cols-[1fr_62px_46px_90px_88px_80px_80px_44px_56px_44px]";
+import { FilterBar } from "@/components/terminal/FilterBar";
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const [filterDir, setFilterDir] = useState("ALL");
-  const [filterTf, setFilterTf] = useState("ALL");
-
-  const { data: stats } = useQuery<PlatformStats>({
-    queryKey: ["platform-stats"],
-    queryFn: async () => (await api.get<PlatformStats>("/api/v1/signals/stats")).data,
-    refetchInterval: 60_000,
-    retry: false,
-  });
+  const queryClient = useQueryClient();
+  const [filterDir, setFilterDir] = useState<"ALL" | "LONG" | "SHORT">("ALL");
+  const [filterTf, setFilterTf] = useState<string>("ALL");
+  const [search, setSearch] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { data: signals, isLoading, refetch } = useSignals({
     direction: filterDir === "ALL" ? undefined : filterDir,
     timeframe: filterTf === "ALL" ? undefined : filterTf,
-    min_confidence: 78,
-    limit: 50,
+    status: "active",
+    min_confidence: 60,
+    limit: 40,
   });
 
-  const { data: scanner } = useScanner();
+  const { data: scannerStatus } = useScanner();
+  const filteredSignals = useMemo(() => {
+    const rows = (signals?.signals || []).filter(
+      (s) => String(s.status || "").toLowerCase() === "active"
+    );
+    if (!search.trim()) return rows;
+    const q = search.trim().toUpperCase();
+    return rows.filter((s) => s.symbol.toUpperCase().includes(q));
+  }, [signals?.signals, search]);
 
-  const rows = signals?.signals || [];
-  const winRate = stats?.win_rate_7d ?? stats?.win_rate_pct ?? 0;
-  const winRateTrend: "up" | "down" | "neutral" = winRate >= 60 ? "up" : winRate >= 40 ? "neutral" : "down";
-  const isActive = scanner?.status === "active" || scanner?.status === "scanning";
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        refetch(),
+        queryClient.invalidateQueries({ queryKey: ["platform-stats"] }),
+        queryClient.invalidateQueries({ queryKey: ["scanner", "status"] }),
+        queryClient.invalidateQueries({ queryKey: ["ticker-prices"] }),
+      ]);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   return (
-    <div className="space-y-2 pb-20 lg:pb-4">
+    <div className="space-y-3 pb-20 lg:pb-6">
       <LiveTicker />
 
-      {/* KPI Strip */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <KPIChip label="Active" value={stats?.active_signals ?? "--"} icon={<Activity className="h-3 w-3" />} />
-        <KPIChip label="Win Rate 7d" value={`${winRate.toFixed(1)}%`} icon={<TrendingUp className="h-3 w-3" />} trend={winRateTrend} />
-        <KPIChip label="TP Hits" value={stats?.tp_hits_90d ?? "--"} icon={<Target className="h-3 w-3" />} trend="up" />
-        <KPIChip label="SL Hits" value={stats?.sl_hits_90d ?? "--"} icon={<Crosshair className="h-3 w-3" />} trend="down" />
-        <KPIChip label="Avg Conf" value={stats?.avg_confidence ?? "--"} />
-        <KPIChip label="Next Scan" value={stats?.next_scan_in ?? "--"} icon={<Clock className="h-3 w-3" />} />
+      <div className="space-y-2">
+        <StatsRow />
+        <ScannerStatus status={scannerStatus} />
       </div>
 
-      {/* Scanner status inline bar */}
-      <div className={`flex items-center gap-3 px-3 py-1.5 rounded-lg border text-2xs font-mono ${
-        isActive ? "bg-long/5 border-long/20" : "bg-surface border-border"
-      }`}>
-        <div className="flex items-center gap-1.5">
-          <span className={`h-1.5 w-1.5 rounded-full ${isActive ? "bg-long animate-pulse" : "bg-text-muted"}`} />
-          <span className={`font-bold tracking-widest ${isActive ? "text-long" : "text-text-muted"}`}>
-            {isActive ? "SCANNING" : "IDLE"}
-          </span>
-        </div>
-        {scanner?.last_scan && (
-          <span className="text-text-muted">Last: <span className="text-text-primary font-bold">{formatTimeAgo(scanner.last_scan)}</span></span>
-        )}
-        <span className="text-text-muted">Next: <span className="text-gold font-bold">{stats?.next_scan_in ?? "--"}</span></span>
-        {scanner?.pairs_scanned !== undefined && (
-          <span className="text-text-muted"><span className="text-blue font-bold">{scanner.pairs_scanned}</span> pairs</span>
-        )}
-        {scanner?.signals_found !== undefined && (
-          <span className="text-text-muted ml-auto"><span className="text-purple font-bold">{scanner.signals_found}</span> found</span>
-        )}
-      </div>
-
-      {/* Main 3+1 grid layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
-
-        {/* Signal Table — 3 cols */}
-        <div className="lg:col-span-3">
-          <Panel
-            title="Live Signals"
-            actions={
-              <button onClick={() => refetch()} className="p-1 rounded hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
-                <RefreshCw className="h-3 w-3" />
-              </button>
-            }
-            noPad
+      <Panel
+        title="Live Signals"
+        actions={
+          <button
+            onClick={handleRefresh}
+            className="p-1.5 rounded hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors"
+            title="Refresh"
+            disabled={isRefreshing}
           >
-            {/* Filter pills */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-              <div className="flex items-center gap-0.5">
-                {["ALL", "LONG", "SHORT"].map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => setFilterDir(d)}
-                    className={`filter-pill ${
-                      filterDir === d
-                        ? d === "LONG" ? "!bg-long !text-white"
-                        : d === "SHORT" ? "!bg-short !text-white"
-                        : "filter-pill-active"
-                        : ""
-                    }`}
-                  >
-                    {d}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-0.5">
-                {["ALL", "5m", "15m", "1H", "4H"].map((tf) => (
-                  <button
-                    key={tf}
-                    onClick={() => setFilterTf(tf)}
-                    className={`filter-pill ${filterTf === tf ? "filter-pill-active" : ""}`}
-                  >
-                    {tf}
-                  </button>
-                ))}
-              </div>
-              <span className="ml-auto text-2xs text-text-muted font-mono">{rows.length} signals</span>
-            </div>
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+          </button>
+        }
+        noPad
+      >
+        <div className="px-3 py-2 border-b border-border">
+          <FilterBar
+            onSearch={setSearch}
+            searchPlaceholder="Search symbol (e.g. BTC)"
+            segments={[
+              {
+                label: "Direction",
+                options: [
+                  { label: "All", value: "ALL" },
+                  { label: "Long", value: "LONG" },
+                  { label: "Short", value: "SHORT" },
+                ],
+                value: filterDir,
+                onChange: (v) => setFilterDir(v as "ALL" | "LONG" | "SHORT"),
+              },
+              {
+                label: "Timeframe",
+                options: [
+                  { label: "All", value: "ALL" },
+                  { label: "5m", value: "5m" },
+                  { label: "15m", value: "15m" },
+                  { label: "1H", value: "1H" },
+                  { label: "4H", value: "4H" },
+                ],
+                value: filterTf,
+                onChange: setFilterTf,
+              },
+            ]}
+          />
+        </div>
 
-            {/* Column headers */}
-            <div className={`grid ${COL} px-3 py-1.5 text-2xs font-semibold text-text-muted uppercase tracking-wider border-b border-border bg-surface-2/40`}>
+        <div className="overflow-x-auto">
+          <div className="min-w-[980px]">
+            <div className="grid grid-cols-[minmax(140px,1fr)_64px_48px_116px_86px_86px_86px_52px_78px_52px] items-center gap-2 px-3 py-1.5 bg-surface-2 border-b border-border text-[10px] font-semibold text-text-muted uppercase tracking-wider">
               <span>Symbol</span>
               <span>Dir</span>
               <span>TF</span>
@@ -141,46 +121,35 @@ export default function DashboardPage() {
             </div>
 
             {isLoading ? (
-              Array.from({ length: 10 }).map((_, i) => (
-                <div key={i} className={`grid ${COL} px-3 py-2.5 border-b border-border/40 animate-pulse gap-2`}>
-                  {Array.from({ length: 10 }).map((_, j) => (
-                    <div key={j} className="h-2 bg-surface-2 rounded" />
-                  ))}
-                </div>
-              ))
-            ) : rows.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-14 text-text-muted">
-                <Zap className="w-7 h-7 mb-2 opacity-25" />
-                <p className="text-xs">No signals — adjust filters or wait for next scan</p>
+              <div className="divide-y divide-border/40">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="h-10 px-3 flex items-center gap-3 animate-pulse">
+                    <div className="w-24 h-2 bg-surface-2 rounded" />
+                    <div className="w-14 h-2 bg-surface-2 rounded" />
+                    <div className="w-8 h-2 bg-surface-2 rounded" />
+                    <div className="w-28 h-2 bg-surface-2 rounded" />
+                    <div className="flex-1 h-2 bg-surface-2 rounded" />
+                  </div>
+                ))}
+              </div>
+            ) : filteredSignals.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-text-muted">
+                <Zap className="w-8 h-8 mb-3 opacity-30" />
+                <p className="text-sm font-medium">No signals found</p>
+                <p className="text-xs mt-1">Adjust filters/search or wait for next scan</p>
               </div>
             ) : (
-              rows.map((s) => (
-                <div
-                  key={s.id}
-                  onClick={() => router.push(`/signal/${s.id}`)}
-                  className={`data-row ${COL}`}
-                >
-                  <span className="font-bold text-text-primary truncate">{s.symbol}</span>
-                  <DirectionBadge direction={s.direction as "LONG" | "SHORT"} />
-                  <span className="text-text-muted">{s.timeframe}</span>
-                  <ConfidenceBar value={s.confidence} />
-                  <span className="text-right text-gold">{formatPrice(s.entry)}</span>
-                  <span className="text-right text-short">{formatPrice(s.stop_loss)}</span>
-                  <span className="text-right text-long">{formatPrice(s.take_profit_1)}</span>
-                  <span className="text-right text-text-secondary">{s.rr_ratio}R</span>
-                  <StatusBadge status={s.status} />
-                  <span className="text-right text-text-muted">{formatTimeAgo(s.fired_at)}</span>
-                </div>
-              ))
+              <div>
+                {filteredSignals.map((signal) => (
+                  <SignalRow key={signal.id} signal={signal} />
+                ))}
+              </div>
             )}
-          </Panel>
+          </div>
         </div>
+      </Panel>
 
-        {/* Market Heatmap — 1 col */}
-        <div>
-          <MarketHeatmap signals={signals?.signals || []} />
-        </div>
-      </div>
+      <MarketHeatmap signals={signals?.signals || []} />
     </div>
   );
 }

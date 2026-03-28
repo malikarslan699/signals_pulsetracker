@@ -3,13 +3,28 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { formatTimeAgo } from "@/lib/formatters";
+import { Panel } from "@/components/terminal/Panel";
+import { FilterBar } from "@/components/terminal/FilterBar";
 import {
-  Search, ChevronLeft, ChevronRight, Edit2, Check, X,
-  UserPlus, Shield, Eye, EyeOff, CheckCircle2, XCircle, RefreshCw,
-  KeyRound, ToggleLeft, ToggleRight,
+  ChevronLeft,
+  ChevronRight,
+  Edit2,
+  X,
+  UserPlus,
+  Shield,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  XCircle,
+  RefreshCw,
+  KeyRound,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuthStore } from "@/store/userStore";
+import { cn } from "@/lib/utils";
 
 interface AdminUser {
   id: string;
@@ -34,9 +49,9 @@ interface UsersResponse {
 }
 
 const PLAN_BADGE: Record<string, string> = {
-  trial:    "text-text-muted bg-surface-2 border-border",
-  monthly:  "text-purple bg-purple/10 border-purple/20",
-  yearly:   "text-long bg-long/10 border-long/20",
+  trial: "text-text-muted bg-surface-2 border-border",
+  monthly: "text-purple bg-purple/10 border-purple/20",
+  yearly: "text-long bg-long/10 border-long/20",
   lifetime: "text-gold bg-gold/10 border-gold/20",
 };
 
@@ -51,22 +66,33 @@ const ROLE_BADGE: Record<string, string> = {
 const PLAN_OPTIONS = ["trial", "monthly", "yearly", "lifetime"];
 const ROLE_OPTIONS_BASE = ["user", "reseller", "admin"];
 
-/* ──────────────────────────────────────────────────────
-   Add User Modal
-────────────────────────────────────────────────────── */
+/* ── Add User Modal ─────────────────────────────────────────────────── */
 function AddUserModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ email: "", username: "", password: "", role: "user", plan: "trial" });
+  const [form, setForm] = useState({
+    email: "",
+    username: "",
+    password: "",
+    role: "user",
+    plan: "trial",
+  });
   const [showPwd, setShowPwd] = useState(false);
 
   const mutation = useMutation({
     mutationFn: (data: typeof form) =>
-      api.post("/api/v1/auth/register", { email: data.email, username: data.username, password: data.password })
+      api
+        .post("/api/v1/auth/register", {
+          email: data.email,
+          username: data.username,
+          password: data.password,
+        })
         .then(async (r) => {
           const userId = r.data.id;
           if (userId) {
             await api.put(`/api/v1/admin/users/${userId}`, {
-              role: data.role, plan: data.plan, is_verified: true,
+              role: data.role,
+              plan: data.plan,
+              is_verified: true,
             });
           }
           return r.data;
@@ -76,72 +102,106 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       onClose();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || "Failed to create user"),
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.detail || "Failed to create user"),
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-surface border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
-            <UserPlus className="w-5 h-5 text-purple" /> Add New User
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface border border-border rounded-xl p-5 w-full max-w-md shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+            <UserPlus className="w-4 h-4 text-purple" /> Add New User
           </h2>
-          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary">
+            <X className="w-4 h-4" />
           </button>
         </div>
-
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div>
-            <label className="block text-xs text-text-muted mb-1.5">Email</label>
-            <input type="email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-              className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple"
-              placeholder="user@example.com" />
+            <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">Email</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+              className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+              placeholder="user@example.com"
+            />
           </div>
           <div>
-            <label className="block text-xs text-text-muted mb-1.5">Username</label>
-            <input type="text" value={form.username} onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))}
-              className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple"
-              placeholder="username" />
+            <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">Username</label>
+            <input
+              type="text"
+              value={form.username}
+              onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))}
+              className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+              placeholder="username"
+            />
           </div>
           <div>
-            <label className="block text-xs text-text-muted mb-1.5">Password</label>
+            <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">Password</label>
             <div className="relative">
-              <input type={showPwd ? "text" : "password"} value={form.password}
+              <input
+                type={showPwd ? "text" : "password"}
+                value={form.password}
                 onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 pr-10 text-sm text-text-primary focus:outline-none focus:border-purple"
-                placeholder="Min 8 characters" />
-              <button type="button" onClick={() => setShowPwd((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
-                {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 pr-8 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+                placeholder="Min 8 characters"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+              >
+                {showPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-xs text-text-muted mb-1.5">Role</label>
-              <select value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple">
-                {ROLE_OPTIONS_BASE.map((r) => <option key={r} value={r}>{r}</option>)}
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">Role</label>
+              <select
+                value={form.role}
+                onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}
+                className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+              >
+                {ROLE_OPTIONS_BASE.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
               </select>
             </div>
             <div>
-              <label className="block text-xs text-text-muted mb-1.5">Plan</label>
-              <select value={form.plan} onChange={(e) => setForm((p) => ({ ...p, plan: e.target.value }))}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple">
-                {PLAN_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">Plan</label>
+              <select
+                value={form.plan}
+                onChange={(e) => setForm((p) => ({ ...p, plan: e.target.value }))}
+                className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+              >
+                {PLAN_OPTIONS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
               </select>
             </div>
           </div>
         </div>
-
-        <div className="flex gap-3 mt-6">
-          <button onClick={onClose}
-            className="flex-1 px-4 py-2 bg-surface-2 border border-border text-text-muted rounded-lg text-sm hover:border-short transition-colors">
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={onClose}
+            className="flex-1 filter-pill justify-center"
+          >
             Cancel
           </button>
-          <button onClick={() => mutation.mutate(form)} disabled={mutation.isPending || !form.email || !form.password}
-            className="flex-1 px-4 py-2 bg-purple text-white rounded-lg text-sm font-medium hover:bg-purple/80 transition-colors disabled:opacity-40">
+          <button
+            onClick={() => mutation.mutate(form)}
+            disabled={mutation.isPending || !form.email || !form.password}
+            className="flex-1 px-3 py-1.5 bg-purple text-white rounded text-xs font-medium hover:opacity-90 disabled:opacity-40"
+          >
             {mutation.isPending ? "Creating..." : "Create User"}
           </button>
         </div>
@@ -150,10 +210,13 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/* ──────────────────────────────────────────────────────
-   Edit User Modal (full editing)
-────────────────────────────────────────────────────── */
-function EditUserModal({ user, canManageOwner, isOwner, onClose }: {
+/* ── Edit User Modal ─────────────────────────────────────────────────── */
+function EditUserModal({
+  user,
+  canManageOwner,
+  isOwner,
+  onClose,
+}: {
   user: AdminUser;
   canManageOwner: boolean;
   isOwner: boolean;
@@ -168,28 +231,26 @@ function EditUserModal({ user, canManageOwner, isOwner, onClose }: {
   const [newPassword, setNewPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
 
-  // Always auto-compute expiry from today when plan changes
   const autoExpiry = (selectedPlan: string): string => {
     const now = new Date();
-    if (selectedPlan === "trial") {
-      now.setHours(now.getHours() + 24);
-    } else if (selectedPlan === "monthly") {
-      now.setDate(now.getDate() + 30);
-    } else if (selectedPlan === "yearly") {
-      now.setFullYear(now.getFullYear() + 1);
-    } else {
-      return ""; // lifetime — no expiry
-    }
+    if (selectedPlan === "trial") now.setDate(now.getDate() + 30);
+    else if (selectedPlan === "monthly") now.setDate(now.getDate() + 30);
+    else if (selectedPlan === "yearly") now.setFullYear(now.getFullYear() + 1);
+    else return "";
     return now.toISOString().slice(0, 10);
   };
 
   const [planExpiry, setPlanExpiry] = useState<string>(
-    user.plan_expires_at ? new Date(user.plan_expires_at).toISOString().slice(0, 10) : ""
+    user.plan_expires_at
+      ? new Date(user.plan_expires_at).toISOString().slice(0, 10)
+      : ""
   );
-  const roleOptions = canManageOwner ? [...ROLE_OPTIONS_BASE, "superadmin"] : ROLE_OPTIONS_BASE;
-  const isTimeLimited = plan === "monthly" || plan === "yearly" || plan === "trial";
+  const roleOptions = canManageOwner
+    ? [...ROLE_OPTIONS_BASE, "superadmin"]
+    : ROLE_OPTIONS_BASE;
+  const isTimeLimited =
+    plan === "monthly" || plan === "yearly" || plan === "trial";
 
-  // Always recalculate from today when plan changes
   const handlePlanChange = (newPlan: string) => {
     setPlan(newPlan);
     setPlanExpiry(autoExpiry(newPlan));
@@ -197,7 +258,12 @@ function EditUserModal({ user, canManageOwner, isOwner, onClose }: {
 
   const updateMutation = useMutation({
     mutationFn: async () => {
-      const payload: Record<string, any> = { plan, role, is_active: isActive, is_verified: isVerified };
+      const payload: Record<string, any> = {
+        plan,
+        role,
+        is_active: isActive,
+        is_verified: isVerified,
+      };
       if (isTimeLimited && planExpiry) {
         payload.plan_expires_at = new Date(planExpiry).toISOString();
       } else if (!isTimeLimited) {
@@ -206,10 +272,7 @@ function EditUserModal({ user, canManageOwner, isOwner, onClose }: {
       if (newPassword && newPassword.length >= 8) {
         payload.password = newPassword;
       }
-      // Only send qa_access if current user is owner
-      if (isOwner) {
-        payload.qa_access = qaAccess;
-      }
+      if (isOwner) payload.qa_access = qaAccess;
       return api.put(`/api/v1/admin/users/${user.id}`, payload).then((r) => r.data);
     },
     onSuccess: () => {
@@ -217,128 +280,166 @@ function EditUserModal({ user, canManageOwner, isOwner, onClose }: {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       onClose();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || "Update failed"),
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.detail || "Update failed"),
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-surface border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface border border-border rounded-xl p-5 w-full max-w-md shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-lg font-bold text-text-primary flex items-center gap-2">
-              <Edit2 className="w-4 h-4 text-purple" /> Edit User
+            <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+              <Edit2 className="w-3.5 h-3.5 text-purple" /> Edit User
             </h2>
-            <p className="text-xs text-text-muted mt-0.5">{user.email}</p>
+            <p className="text-2xs text-text-muted mt-0.5">{user.email}</p>
           </div>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary">
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="space-y-4">
-          {/* Status toggles */}
-          <div className="flex gap-3">
-            <button type="button" onClick={() => setIsActive((v) => !v)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm flex-1 transition-colors ${
-                isActive ? "bg-long/10 border-long/30 text-long" : "bg-surface-2 border-border text-text-muted"
-              }`}>
-              {isActive ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setIsActive((v) => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs flex-1 transition-colors",
+                isActive
+                  ? "bg-long/10 border-long/30 text-long"
+                  : "bg-surface-2 border-border text-text-muted"
+              )}
+            >
+              {isActive ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
               {isActive ? "Active" : "Inactive"}
             </button>
-            <button type="button" onClick={() => setIsVerified((v) => !v)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm flex-1 transition-colors ${
-                isVerified ? "bg-blue/10 border-blue/30 text-blue" : "bg-surface-2 border-border text-text-muted"
-              }`}>
-              {isVerified ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+            <button
+              type="button"
+              onClick={() => setIsVerified((v) => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs flex-1 transition-colors",
+                isVerified
+                  ? "bg-blue/10 border-blue/30 text-blue"
+                  : "bg-surface-2 border-border text-text-muted"
+              )}
+            >
+              {isVerified ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
               {isVerified ? "Verified" : "Unverified"}
             </button>
           </div>
 
-          {/* Role & Plan */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-xs text-text-muted mb-1.5 flex items-center gap-1">
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 flex items-center gap-1">
                 <Shield className="w-3 h-3" /> Role
               </label>
-              <select value={role} onChange={(e) => setRole(e.target.value)}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple">
-                {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+              >
+                {roleOptions.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
               </select>
             </div>
             <div>
-              <label className="block text-xs text-text-muted mb-1.5">Plan</label>
-              <select value={plan} onChange={(e) => handlePlanChange(e.target.value)}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple">
-                {PLAN_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">Plan</label>
+              <select
+                value={plan}
+                onChange={(e) => handlePlanChange(e.target.value)}
+                className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+              >
+                {PLAN_OPTIONS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
               </select>
             </div>
           </div>
 
-          {/* Plan expiry — only shown for time-limited plans */}
           {isTimeLimited && (
             <div>
-              <label className="block text-xs text-text-muted mb-1.5">
-                Plan Expires (leave blank = no expiry set)
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">
+                Plan Expires
               </label>
               <input
                 type="date"
                 value={planExpiry}
                 onChange={(e) => setPlanExpiry(e.target.value)}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-purple"
+                className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
               />
             </div>
           )}
 
-          {/* QA Lab Access — owner only, shown when editing admins */}
           {isOwner && (role === "admin" || role === "superadmin") && (
-            <div className="flex items-center justify-between p-3 bg-surface-2 border border-purple/20 rounded-lg">
+            <div className="flex items-center justify-between px-2.5 py-2 bg-surface-2 border border-purple/20 rounded">
               <div>
-                <p className="text-sm font-medium text-text-primary flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-purple" /> QA Lab Access
+                <p className="text-xs font-medium text-text-primary flex items-center gap-1">
+                  <Shield className="w-3 h-3 text-purple" /> QA Lab Access
                 </p>
-                <p className="text-xs text-text-muted mt-0.5">Allow this admin to view QA research</p>
+                <p className="text-2xs text-text-muted mt-0.5">Allow viewing QA research</p>
               </div>
-              <button type="button" onClick={() => setQaAccess((v) => !v)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              <button
+                type="button"
+                onClick={() => setQaAccess((v) => !v)}
+                className={cn(
+                  "flex items-center gap-1 px-2.5 py-1 rounded border text-xs transition-colors",
                   qaAccess
                     ? "bg-purple/10 border-purple/30 text-purple"
                     : "bg-surface border-border text-text-muted"
-                }`}>
-                {qaAccess ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                )}
+              >
+                {qaAccess ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
                 {qaAccess ? "Granted" : "Revoked"}
               </button>
             </div>
           )}
 
-          {/* Password reset */}
           <div>
-            <label className="block text-xs text-text-muted mb-1.5 flex items-center gap-1">
+            <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 flex items-center gap-1">
               <KeyRound className="w-3 h-3" /> New Password (optional)
             </label>
             <div className="relative">
-              <input type={showPwd ? "text" : "password"} value={newPassword}
+              <input
+                type={showPwd ? "text" : "password"}
+                value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 pr-10 text-sm text-text-primary focus:outline-none focus:border-purple"
-                placeholder="Leave blank to keep current" />
-              <button type="button" onClick={() => setShowPwd((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
-                {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                className="w-full h-8 bg-surface-2 border border-border rounded px-2.5 pr-8 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-purple"
+                placeholder="Leave blank to keep current"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+              >
+                {showPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               </button>
             </div>
             {newPassword && newPassword.length < 8 && (
-              <p className="text-xs text-short mt-1">Min 8 characters</p>
+              <p className="text-2xs text-short mt-0.5">Min 8 characters</p>
             )}
           </div>
         </div>
 
-        <div className="flex gap-3 mt-6">
-          <button onClick={onClose}
-            className="flex-1 px-4 py-2 bg-surface-2 border border-border text-text-muted rounded-lg text-sm hover:border-short transition-colors">
+        <div className="flex gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 filter-pill justify-center">
             Cancel
           </button>
-          <button onClick={() => updateMutation.mutate()}
-            disabled={updateMutation.isPending || (!!newPassword && newPassword.length < 8)}
-            className="flex-1 px-4 py-2 bg-purple text-white rounded-lg text-sm font-medium hover:bg-purple/80 transition-colors disabled:opacity-40">
+          <button
+            onClick={() => updateMutation.mutate()}
+            disabled={
+              updateMutation.isPending ||
+              (!!newPassword && newPassword.length < 8)
+            }
+            className="flex-1 px-3 py-1.5 bg-purple text-white rounded text-xs font-medium hover:opacity-90 disabled:opacity-40"
+          >
             {updateMutation.isPending ? "Saving..." : "Save Changes"}
           </button>
         </div>
@@ -347,13 +448,12 @@ function EditUserModal({ user, canManageOwner, isOwner, onClose }: {
   );
 }
 
-/* ──────────────────────────────────────────────────────
-   Main Page
-────────────────────────────────────────────────────── */
+/* ── Main Page ─────────────────────────────────────────────────────── */
 export default function AdminUsersPage() {
   const queryClient = useQueryClient();
   const { user: currentUser } = useAuthStore();
-  const canManageOwner = currentUser?.role === "owner" || currentUser?.role === "superadmin";
+  const canManageOwner =
+    currentUser?.role === "owner" || currentUser?.role === "superadmin";
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -376,191 +476,207 @@ export default function AdminUsersPage() {
       toast.success(is_active ? "User activated" : "User deactivated");
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || "Failed to update status"),
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.detail || "Failed to update status"),
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/users/${id}`),
+    onSuccess: () => {
+      toast.success("User deleted");
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.detail || "Failed to delete user"),
   });
 
   const users: AdminUser[] = data?.items || [];
   const totalPages = data?.pages ?? 1;
 
   return (
-    <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-          <input
-            type="text"
-            placeholder="Search by email or username..."
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            className="w-full pl-9 pr-4 py-2 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-purple"
+    <div className="space-y-3">
+      <Panel noPad>
+        {/* Toolbar */}
+        <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
+          <FilterBar
+            onSearch={(q) => { setSearch(q); setPage(1); }}
+            searchPlaceholder="Search users..."
           />
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-2xs text-text-muted">{data?.total ?? 0} users</span>
+            <button
+              onClick={() => refetch()}
+              className="filter-pill"
+              title="Refresh"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-2.5 py-1 bg-purple text-white rounded text-xs font-medium hover:opacity-90 flex items-center gap-1"
+            >
+              <UserPlus className="h-3 w-3" />
+              Add User
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 ml-auto">
-          <span className="text-sm text-text-muted">{data?.total ?? 0} users</span>
-          <button onClick={() => refetch()}
-            className="p-2 bg-surface border border-border rounded-lg text-text-muted hover:border-purple hover:text-purple transition-colors"
-            title="Refresh">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-purple text-white rounded-lg text-sm font-medium hover:bg-purple/80 transition-colors">
-            <UserPlus className="w-4 h-4" />
-            Add User
-          </button>
+        {/* Table Header */}
+        <div className="grid grid-cols-[1fr_1.2fr_70px_60px_50px_50px_80px_50px_110px] px-3 py-1.5 text-2xs font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+          <span>Username</span>
+          <span>Email</span>
+          <span>Plan</span>
+          <span>Role</span>
+          <span>Active</span>
+          <span>Verified</span>
+          <span>Joined</span>
+          <span>TG</span>
+          <span></span>
         </div>
-      </div>
 
-      {/* Table */}
-      <div className="bg-surface border border-border rounded-xl overflow-hidden">
+        {/* Rows */}
         {isLoading ? (
-          <div className="p-4 space-y-2">
+          <div className="p-3 space-y-2">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-14 bg-surface-2 rounded animate-pulse" />
+              <div key={i} className="h-8 bg-surface-2 rounded animate-pulse" />
             ))}
           </div>
         ) : isError ? (
-          <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <XCircle className="w-8 h-8 text-short opacity-60" />
-            <p className="text-text-muted text-sm">Failed to load users.</p>
-            <button onClick={() => refetch()}
-              className="px-4 py-2 bg-purple/10 border border-purple/20 text-purple rounded-lg text-sm hover:bg-purple/20 transition-colors">
+          <div className="flex flex-col items-center justify-center py-8 gap-2">
+            <XCircle className="w-6 h-6 text-short opacity-60" />
+            <p className="text-text-muted text-xs">Failed to load users.</p>
+            <button
+              onClick={() => refetch()}
+              className="filter-pill text-purple border-purple/30"
+            >
               Try Again
             </button>
           </div>
         ) : users.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-text-muted text-sm gap-2">
-            <p>No users found</p>
+          <div className="flex items-center justify-center py-8 text-text-muted text-xs">
+            No users found
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-surface-2 text-xs">
-                  <th className="text-left px-4 py-3 text-text-muted font-medium">User</th>
-                  <th className="text-center px-3 py-3 text-text-muted font-medium">Status</th>
-                  <th className="text-left px-3 py-3 text-text-muted font-medium">Role</th>
-                  <th className="text-left px-3 py-3 text-text-muted font-medium">Plan</th>
-                  <th className="text-center px-3 py-3 text-text-muted font-medium">Verified</th>
-                  <th className="text-right px-3 py-3 text-text-muted font-medium">Joined</th>
-                  <th className="text-right px-4 py-3 text-text-muted font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u, i) => (
-                  <tr
-                    key={u.id}
-                    className={`border-b border-border hover:bg-surface-2/60 transition-colors ${i % 2 !== 0 ? "bg-surface-2/20" : ""}`}
-                  >
-                    {/* User info */}
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col">
-                        <span className="font-medium text-text-primary text-sm">{u.username || "—"}</span>
-                        <span className="text-xs text-text-muted font-mono">{u.email}</span>
-                        {u.telegram_username && (
-                          <span className="text-xs text-blue mt-0.5">@{u.telegram_username}</span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Active status toggle */}
-                    <td className="px-3 py-3 text-center">
-                      <button
-                        onClick={() => toggleActiveMutation.mutate({ id: u.id, is_active: !u.is_active })}
-                        disabled={toggleActiveMutation.isPending}
-                        title={u.is_active ? "Click to deactivate" : "Click to activate"}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-                          u.is_active
-                            ? "bg-long/10 text-long border-long/20 hover:bg-long/20"
-                            : "bg-short/10 text-short border-short/20 hover:bg-short/20"
-                        }`}
-                      >
-                        {u.is_active ? (
-                          <><CheckCircle2 className="w-3 h-3" /> Active</>
-                        ) : (
-                          <><XCircle className="w-3 h-3" /> Inactive</>
-                        )}
-                      </button>
-                    </td>
-
-                    {/* Role */}
-                    <td className="px-3 py-3">
-                      <span className={`text-xs font-medium capitalize ${ROLE_BADGE[u.role] ?? "text-text-muted"}`}>
-                        {u.role === "superadmin" ? "owner" : u.role}
-                      </span>
-                    </td>
-
-                    {/* Plan / subscription */}
-                    <td className="px-3 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize w-fit ${
-                          PLAN_BADGE[u.plan] ?? "text-text-muted bg-surface-2 border-border"
-                        }`}>
-                          {u.plan}
-                        </span>
-                        {u.plan_expires_at && (
-                          <span className="text-xs text-text-muted">
-                            Exp: {new Date(u.plan_expires_at).toLocaleDateString()}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Verified */}
-                    <td className="px-3 py-3 text-center">
-                      {u.is_verified ? (
-                        <CheckCircle2 className="w-4 h-4 text-long mx-auto" aria-label="Email verified" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-short mx-auto" aria-label="Not verified" />
-                      )}
-                    </td>
-
-                    {/* Joined */}
-                    <td className="px-3 py-3 text-right text-xs text-text-muted whitespace-nowrap">
-                      {formatTimeAgo(u.created_at)}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end">
-                        <button
-                          onClick={() => setEditingUser(u)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple/10 border border-purple/20 text-purple rounded-lg text-xs hover:bg-purple/20 transition-colors"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          Edit
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          users.map((u) => (
+            <div
+              key={u.id}
+              className="grid grid-cols-[1fr_1.2fr_70px_60px_50px_50px_80px_50px_110px] data-row"
+            >
+              <span className="font-medium text-text-primary">{u.username || "—"}</span>
+              <span className="text-text-muted truncate text-2xs font-mono">{u.email}</span>
+              <span>
+                <span
+                  className={cn(
+                    "text-2xs px-1.5 py-0.5 rounded-full border font-medium capitalize",
+                    PLAN_BADGE[u.plan] ?? "text-text-muted bg-surface-2 border-border"
+                  )}
+                >
+                  {u.plan}
+                </span>
+              </span>
+              <span
+                className={cn(
+                  "text-2xs font-medium capitalize",
+                  ROLE_BADGE[u.role] ?? "text-text-muted"
+                )}
+              >
+                {u.role === "superadmin" ? "owner" : u.role}
+              </span>
+              <button
+                onClick={() =>
+                  toggleActiveMutation.mutate({ id: u.id, is_active: !u.is_active })
+                }
+                disabled={toggleActiveMutation.isPending}
+                className={cn(
+                  "text-2xs font-semibold text-left",
+                  u.is_active ? "text-long" : "text-short"
+                )}
+              >
+                {u.is_active ? "Yes" : "No"}
+              </button>
+              <span
+                className={cn(
+                  "text-2xs font-semibold",
+                  u.is_verified ? "text-long" : "text-gold"
+                )}
+              >
+                {u.is_verified ? "✓" : "✗"}
+              </span>
+              <span className="text-2xs text-text-muted">
+                {formatTimeAgo(u.created_at)}
+              </span>
+              <span
+                className={cn(
+                  "text-2xs",
+                  u.telegram_chat_id ? "text-blue" : "text-text-muted"
+                )}
+              >
+                {u.telegram_chat_id ? "✓" : "—"}
+              </span>
+              <div className="flex items-center gap-1 justify-end">
+                <button
+                  onClick={() => setEditingUser(u)}
+                  className="px-1.5 py-1 rounded hover:bg-surface-2 text-text-muted hover:text-text-primary text-2xs"
+                  title="Edit user"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Edit2 className="h-3 w-3" />
+                    Edit
+                  </span>
+                </button>
+                <button
+                  onClick={() => {
+                    const canDelete = currentUser?.id !== u.id;
+                    if (!canDelete) {
+                      toast.error("You cannot delete your own account.");
+                      return;
+                    }
+                    const ok = window.confirm(
+                      `Delete user "${u.username || u.email}" permanently?`
+                    );
+                    if (ok) deleteUserMutation.mutate(u.id);
+                  }}
+                  disabled={deleteUserMutation.isPending}
+                  className="px-1.5 py-1 rounded hover:bg-short/10 text-text-muted hover:text-short disabled:opacity-40 text-2xs"
+                  title="Delete user"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Trash2 className="h-3 w-3" />
+                    Delete
+                  </span>
+                </button>
+              </div>
+            </div>
+          ))
         )}
 
         {/* Pagination */}
         {!isLoading && !isError && totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border">
-            <span className="text-xs text-text-muted">
+          <div className="flex items-center justify-between px-3 py-2 border-t border-border">
+            <span className="text-2xs text-text-muted">
               Page {page} of {totalPages} · {data?.total ?? 0} total
             </span>
-            <div className="flex gap-2">
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-                className="flex items-center gap-1 px-3 py-1.5 bg-surface-2 border border-border rounded-lg text-xs text-text-muted disabled:opacity-40 hover:border-purple hover:text-text-primary transition-colors">
-                <ChevronLeft className="w-3.5 h-3.5" /> Prev
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="p-1 rounded hover:bg-surface-2 text-text-muted disabled:opacity-40"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
               </button>
-              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                className="flex items-center gap-1 px-3 py-1.5 bg-surface-2 border border-border rounded-lg text-xs text-text-muted disabled:opacity-40 hover:border-purple hover:text-text-primary transition-colors">
-                Next <ChevronRight className="w-3.5 h-3.5" />
+              <span className="text-2xs font-mono text-text-primary px-2">{page}</span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="p-1 rounded hover:bg-surface-2 text-text-muted disabled:opacity-40"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
         )}
-      </div>
+      </Panel>
 
-      {/* Modals */}
       {showAddModal && <AddUserModal onClose={() => setShowAddModal(false)} />}
       {editingUser && (
         <EditUserModal

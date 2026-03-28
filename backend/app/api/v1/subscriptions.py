@@ -30,8 +30,8 @@ PLANS = {
         "id": "trial",
         "name": "Trial",
         "price_usd": 0,
-        "duration_days": 1,
-        "duration_label": "24 hours",
+        "duration_days": 30,
+        "duration_label": "30 days",
         "badge_text": "",
         "badge_color": "#6B7280",
         "features": [

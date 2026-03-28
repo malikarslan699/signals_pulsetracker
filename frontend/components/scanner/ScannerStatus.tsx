@@ -12,14 +12,19 @@ export function ScannerStatus({ status }: ScannerStatusProps) {
   const [countdown, setCountdown] = useState<string>("--:--");
 
   useEffect(() => {
-    if (!status?.next_scan) {
+    if (status?.is_running) {
+      setCountdown("Running");
+      return;
+    }
+
+    if (!status?.next_run_at) {
       setCountdown("--:--");
       return;
     }
 
     const updateCountdown = () => {
       const now = Date.now();
-      const target = new Date(status.next_scan!).getTime();
+      const target = new Date(status.next_run_at!).getTime();
       const diff = target - now;
 
       if (diff <= 0) {
@@ -35,10 +40,9 @@ export function ScannerStatus({ status }: ScannerStatusProps) {
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
-  }, [status?.next_scan]);
+  }, [status?.is_running, status?.next_run_at]);
 
-  const isActive =
-    status?.status === "active" || status?.status === "scanning";
+  const isActive = Boolean(status?.is_running);
 
   return (
     <div
@@ -57,10 +61,10 @@ export function ScannerStatus({ status }: ScannerStatusProps) {
 
       <div className="w-px h-3 bg-border hidden sm:block" />
 
-      {status?.last_scan && (
+      {status?.last_run_at && (
         <div className="flex items-center gap-1 text-text-muted">
           <Clock className="w-3 h-3" />
-          <span>Last: {formatTimeAgo(status.last_scan)}</span>
+          <span>Last: {formatTimeAgo(status.last_run_at)}</span>
         </div>
       )}
 
@@ -69,20 +73,23 @@ export function ScannerStatus({ status }: ScannerStatusProps) {
         <span>Next: <span className="font-bold text-gold">{countdown}</span></span>
       </div>
 
-      {status?.pairs_scanned !== undefined && (
+      {status && (
         <>
           <div className="w-px h-3 bg-border hidden sm:block" />
           <div className="flex items-center gap-1 text-text-muted">
             <Search className="w-3 h-3 text-blue" />
-            <span><span className="font-bold text-blue">{status.pairs_scanned}</span> pairs</span>
+            <span>
+              <span className="font-bold text-blue">{status.pairs_done}</span>
+              {status.pairs_total > 0 ? ` / ${status.pairs_total}` : ""} pairs
+            </span>
           </div>
         </>
       )}
 
-      {status?.signals_found !== undefined && (
+      {status && (
         <div className="flex items-center gap-1 text-text-muted ml-auto">
-          <Activity className="w-3 h-3 text-purple" />
-          <span><span className="font-bold text-purple">{status.signals_found}</span> found</span>
+          <Activity className="w-3 h-3 text-long" />
+          <span><span className="font-bold text-long">{status.signals_found_this_run}</span> found</span>
         </div>
       )}
     </div>

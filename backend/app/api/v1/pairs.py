@@ -16,6 +16,7 @@ from app.models.pair import Pair
 from app.models.user import User
 from app.redis_client import RedisClient, get_redis_client
 from app.schemas.scanner import AnalysisResponse, CandleResponse, PairResponse
+from app.services.package_config_service import get_package, load_packages_config
 
 router = APIRouter(prefix="/pairs", tags=["Pairs"])
 settings = get_settings()
@@ -45,6 +46,16 @@ _BINANCE_TF_MAP = {
     "1D": "1d",
     "1W": "1w",
 }
+
+
+async def _can_access_advanced_analysis(current_user: User, redis: RedisClient) -> bool:
+    if current_user.is_admin:
+        return True
+    config = await load_packages_config(redis)
+    pkg = get_package(config, current_user.plan) or get_package(config, "trial")
+    if not pkg:
+        return current_user.plan in ("monthly", "yearly", "lifetime")
+    return bool(pkg.features.advanced_indicator_breakdown)
 
 
 async def _fetch_ticker_snapshot_from_binance() -> list[dict]:
@@ -297,11 +308,11 @@ async def get_analysis(
 ) -> AnalysisResponse:
     """
     Run MasterScorer analysis for the given symbol and return full indicator data.
-    Requires monthly or lifetime subscription.
+    Access is controlled by package configuration.
     """
-    if current_user.plan not in ("monthly", "yearly", "lifetime") and not current_user.is_admin:
+    if not await _can_access_advanced_analysis(current_user, redis):
         raise SubscriptionRequiredError(
-            "Full indicator analysis requires a monthly or lifetime plan.",
+            "Full indicator analysis is not included in your current package.",
             required_plan="monthly",
         )
 

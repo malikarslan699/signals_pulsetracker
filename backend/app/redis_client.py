@@ -49,6 +49,7 @@ class RedisClient:
     # Key prefixes
     _CANDLES_KEY = "candles:{symbol}:{timeframe}"
     _SIGNAL_KEY = "signal:{symbol}"
+    _SIGNAL_BY_ID_KEY = "signal:id:{signal_id}"
     _ACTIVE_SIGNALS_KEY = "active_signals"
     _SCANNER_QUEUE_KEY = "scanner:queue"
     _SCANNER_STATUS_KEY = "scanner:status"
@@ -105,10 +106,17 @@ class RedisClient:
         """Store the latest signal for a symbol and add to active-signals set."""
         key = self._SIGNAL_KEY.format(symbol=symbol)
         payload = json.dumps(signal_data)
+        signal_id = signal_data.get("id")
 
         # TTL: 24 hours for individual signal
         pipe = self._r.pipeline()
         pipe.set(key, payload, ex=86400)
+        if signal_id:
+            pipe.set(
+                self._SIGNAL_BY_ID_KEY.format(signal_id=signal_id),
+                payload,
+                ex=86400,
+            )
         # Sorted set: score = confidence (higher = better)
         confidence = signal_data.get("confidence", 0)
         pipe.zadd(self._ACTIVE_SIGNALS_KEY, {symbol: confidence})
@@ -164,9 +172,17 @@ class RedisClient:
     async def remove_signal(self, symbol: str) -> None:
         """Remove a signal from cache and active-signals set."""
         key = self._SIGNAL_KEY.format(symbol=symbol)
+        raw_current = await self._r.get(key)
         pipe = self._r.pipeline()
         pipe.delete(key)
         pipe.zrem(self._ACTIVE_SIGNALS_KEY, symbol)
+        if raw_current:
+            try:
+                signal_id = json.loads(raw_current).get("id")
+                if signal_id:
+                    pipe.delete(self._SIGNAL_BY_ID_KEY.format(signal_id=signal_id))
+            except Exception:
+                pass
         # Clean legacy payload-based zset entries for this symbol.
         rows = await self._r.zrange("signals:active", 0, -1)
         for row in rows:
@@ -176,6 +192,9 @@ class RedisClient:
                 continue
             if str(payload.get("symbol", "")).upper() == symbol.upper():
                 pipe.zrem("signals:active", row)
+                signal_id = payload.get("id")
+                if signal_id:
+                    pipe.delete(self._SIGNAL_BY_ID_KEY.format(signal_id=signal_id))
         await pipe.execute()
 
     # ------------------------------------------------------------------

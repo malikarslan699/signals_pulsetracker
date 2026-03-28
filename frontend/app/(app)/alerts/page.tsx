@@ -2,7 +2,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Bell, Plus, Trash2, Edit2, Send, CheckCircle, AlertCircle } from "lucide-react";
+import { Panel } from "@/components/terminal/Panel";
+import { Bell, Plus, Trash2, Send } from "lucide-react";
+import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
 
 interface AlertConfig {
@@ -44,7 +46,8 @@ export default function AlertsPage() {
       setShowForm(false);
       setForm({ ...defaultForm });
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || "Failed to create alert"),
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.detail || "Failed to create alert"),
   });
 
   const deleteMutation = useMutation({
@@ -55,206 +58,249 @@ export default function AlertsPage() {
     },
   });
 
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
+      api.put(`/api/v1/alerts/${id}`, { is_active }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts"] }),
+    onError: () => toast.error("Failed to update alert"),
+  });
+
   const testMutation = useMutation({
-    mutationFn: () => api.post("/api/v1/alerts/test"),
+    mutationFn: () => api.post("/api/v1/alerts/test", {}),
     onSuccess: () => toast.success("Test alert sent to Telegram!"),
-    onError: (e: any) => toast.error(e?.response?.data?.detail || "Test failed — connect Telegram first"),
+    onError: (e: any) =>
+      toast.error(
+        e?.response?.data?.detail || "Test failed — connect Telegram first"
+      ),
   });
 
   const toggle = (arr: string[], val: string) =>
     arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val];
 
+  const alertList = alerts || [];
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6 pb-20 lg:pb-6">
-      {/* Header */}
+    <div className="p-3 space-y-3 pb-20 lg:pb-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary">Alert Configuration</h1>
-          <p className="text-text-muted text-sm mt-1">
-            Configure Telegram alerts for new signals
-          </p>
+        <div className="flex items-center gap-2">
+          <h1 className="text-sm font-semibold text-text-primary">Alert Rules</h1>
+          <span className="text-2xs text-text-muted font-mono">{alertList.length} rules</span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-1.5">
           <button
             onClick={() => testMutation.mutate()}
             disabled={testMutation.isPending}
-            className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors"
+            className="filter-pill gap-1"
           >
-            <Send className="w-4 h-4" />
+            <Send className="h-3 w-3" />
             Test Alert
           </button>
           <button
-            onClick={() => setShowForm(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-purple text-white rounded-lg text-sm font-medium hover:bg-purple/90 transition-colors"
+            onClick={() => setShowForm(!showForm)}
+            className={cn("filter-pill gap-1", showForm && "filter-pill-active")}
           >
-            <Plus className="w-4 h-4" />
-            New Alert
+            <Plus className="h-3 w-3" />
+            New Rule
           </button>
         </div>
       </div>
 
-      {/* Info banner */}
-      <div className="bg-surface border border-blue/30 rounded-xl p-4 flex items-start gap-3">
-        <AlertCircle className="w-5 h-5 text-blue mt-0.5 flex-shrink-0" />
-        <div className="text-sm text-text-secondary">
-          <p className="font-medium text-text-primary mb-1">Connect Telegram First</p>
-          <p>
-            Go to <span className="text-blue font-mono">@PulseSignalProBot</span> on Telegram and use{" "}
-            <span className="font-mono text-gold">/start</span> to get a verification code, then link it in Settings.
-          </p>
-        </div>
+      {/* Info Banner */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-blue/10 border border-blue/20 rounded text-2xs text-blue">
+        <Bell className="h-3.5 w-3.5 shrink-0" />
+        <span>
+          Connect Telegram in Settings to receive real-time signal alerts based on your rules.
+          Use <span className="font-mono">@PulseSignalProBot</span> → <span className="font-mono">/start</span>.
+        </span>
       </div>
 
-      {/* Create form */}
+      {/* Create Form */}
       {showForm && (
-        <div className="bg-surface border border-border rounded-xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-text-primary">New Alert Rule</h2>
-
-          {/* Min confidence */}
-          <div>
-            <label className="block text-sm text-text-muted mb-2">
-              Minimum Confidence: <span className="text-text-primary font-mono">{form.min_confidence}</span>
-            </label>
-            <input
-              type="range"
-              min={50}
-              max={95}
-              step={5}
-              value={form.min_confidence}
-              onChange={(e) => setForm({ ...form, min_confidence: Number(e.target.value) })}
-              className="w-full accent-purple"
-            />
-            <div className="flex justify-between text-xs text-text-muted mt-1">
-              <span>50</span><span>95</span>
+        <Panel title="Create Alert Rule">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">
+                Min Confidence: <span className="font-mono text-long">{form.min_confidence}</span>
+              </label>
+              <input
+                type="range"
+                min="50"
+                max="95"
+                step="5"
+                value={form.min_confidence}
+                onChange={(e) =>
+                  setForm({ ...form, min_confidence: Number(e.target.value) })
+                }
+                className="w-full accent-long"
+              />
+              <div className="flex justify-between text-2xs text-text-muted mt-0.5">
+                <span>50</span>
+                <span>95</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">
+                Direction
+              </label>
+              <div className="flex gap-1">
+                {["LONG", "SHORT"].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() =>
+                      setForm({ ...form, directions: toggle(form.directions, d) })
+                    }
+                    className={cn(
+                      "filter-pill",
+                      form.directions.includes(d) && "filter-pill-active"
+                    )}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">
+                Timeframes
+              </label>
+              <div className="flex gap-1 flex-wrap">
+                {["5m", "15m", "1H", "4H", "1D"].map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() =>
+                      setForm({ ...form, timeframes: toggle(form.timeframes, tf) })
+                    }
+                    className={cn(
+                      "filter-pill",
+                      form.timeframes.includes(tf) && "filter-pill-active"
+                    )}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">
+                Markets
+              </label>
+              <div className="flex gap-1">
+                {["crypto", "forex"].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() =>
+                      setForm({ ...form, markets: toggle(form.markets, m) })
+                    }
+                    className={cn(
+                      "filter-pill capitalize",
+                      form.markets.includes(m) && "filter-pill-active"
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-
-          {/* Direction */}
-          <div>
-            <label className="block text-sm text-text-muted mb-2">Direction</label>
-            <div className="flex gap-2">
-              {["LONG", "SHORT"].map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setForm({ ...form, directions: toggle(form.directions, d) })}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
-                    form.directions.includes(d)
-                      ? d === "LONG"
-                        ? "bg-long border-long text-white"
-                        : "bg-short border-short text-white"
-                      : "border-border text-text-muted hover:border-border-light"
-                  }`}
-                >
-                  {d}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Timeframes */}
-          <div>
-            <label className="block text-sm text-text-muted mb-2">Timeframes</label>
-            <div className="flex gap-2 flex-wrap">
-              {["5m", "15m", "1H", "4H", "1D"].map((tf) => (
-                <button
-                  key={tf}
-                  onClick={() => setForm({ ...form, timeframes: toggle(form.timeframes, tf) })}
-                  className={`px-3 py-1.5 rounded-lg text-sm border transition-all ${
-                    form.timeframes.includes(tf)
-                      ? "bg-blue border-blue text-white"
-                      : "border-border text-text-muted hover:border-border-light"
-                  }`}
-                >
-                  {tf}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Markets */}
-          <div>
-            <label className="block text-sm text-text-muted mb-2">Markets</label>
-            <div className="flex gap-2">
-              {["crypto", "forex"].map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setForm({ ...form, markets: toggle(form.markets, m) })}
-                  className={`px-4 py-2 rounded-lg text-sm border capitalize transition-all ${
-                    form.markets.includes(m)
-                      ? "bg-purple border-purple text-white"
-                      : "border-border text-text-muted hover:border-border-light"
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => createMutation.mutate(form)}
-              disabled={createMutation.isPending}
-              className="flex-1 py-2.5 bg-purple text-white rounded-lg font-medium hover:bg-purple/90 transition-colors"
-            >
-              {createMutation.isPending ? "Creating..." : "Create Alert"}
-            </button>
+          <div className="flex justify-end gap-2 mt-3">
             <button
               onClick={() => setShowForm(false)}
-              className="px-6 py-2.5 bg-surface-2 text-text-secondary rounded-lg hover:text-text-primary transition-colors"
+              className="filter-pill"
             >
               Cancel
             </button>
+            <button
+              onClick={() => createMutation.mutate(form)}
+              disabled={createMutation.isPending}
+              className="px-3 py-1.5 bg-long text-white rounded text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {createMutation.isPending ? "Creating..." : "Create Rule"}
+            </button>
           </div>
-        </div>
+        </Panel>
       )}
 
-      {/* Alert list */}
+      {/* Alert List */}
       {isLoading ? (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {[1, 2].map((i) => (
-            <div key={i} className="h-24 bg-surface border border-border rounded-xl animate-pulse" />
+            <div key={i} className="h-16 bg-surface border border-border rounded animate-pulse" />
           ))}
         </div>
-      ) : alerts && alerts.length > 0 ? (
-        <div className="space-y-3">
-          {alerts.map((alert) => (
-            <div key={alert.id} className="bg-surface border border-border rounded-xl p-5">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${alert.is_active ? "bg-long/10" : "bg-surface-2"}`}>
-                    <Bell className={`w-5 h-5 ${alert.is_active ? "text-long" : "text-text-muted"}`} />
+      ) : alertList.length > 0 ? (
+        <div className="space-y-2">
+          {alertList.map((alert) => (
+            <Panel key={alert.id} noPad>
+              <div className="flex items-center justify-between px-3 py-2">
+                <div className="flex items-center gap-3 flex-wrap text-xs">
+                  <div className="flex items-center gap-1">
+                    <span className="text-2xs text-text-muted">Confidence ≥</span>
+                    <span className="font-mono font-semibold text-text-primary">
+                      {alert.min_confidence}%
+                    </span>
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-text-primary capitalize">{alert.channel}</span>
-                      {alert.is_active ? (
-                        <span className="text-xs px-2 py-0.5 bg-long/10 text-long rounded-full">Active</span>
-                      ) : (
-                        <span className="text-xs px-2 py-0.5 bg-surface-2 text-text-muted rounded-full">Paused</span>
-                      )}
-                    </div>
-                    <p className="text-sm text-text-muted mt-0.5">
-                      Min confidence: <span className="text-text-secondary font-mono">{alert.min_confidence}</span> ·{" "}
-                      {alert.directions.join("/")} · {alert.timeframes.join(", ")} · {alert.markets.join(", ")}
-                    </p>
+                  <div className="h-3 w-px bg-border" />
+                  <div className="flex gap-1">
+                    {alert.directions.map((d) => (
+                      <span
+                        key={d}
+                        className={cn(
+                          "text-2xs font-bold",
+                          d === "LONG" ? "text-long" : "text-short"
+                        )}
+                      >
+                        {d}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="h-3 w-px bg-border" />
+                  <div className="flex gap-1">
+                    {alert.timeframes.map((tf) => (
+                      <span key={tf} className="text-2xs text-text-muted">
+                        {tf}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="h-3 w-px bg-border" />
+                  <div className="flex gap-1">
+                    {alert.markets.map((m) => (
+                      <span key={m} className="text-2xs text-text-muted capitalize">
+                        {m}
+                      </span>
+                    ))}
                   </div>
                 </div>
-                <button
-                  onClick={() => deleteMutation.mutate(alert.id)}
-                  className="p-2 text-text-muted hover:text-short transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button
+                    onClick={() => toggleMutation.mutate({ id: alert.id, is_active: !alert.is_active })}
+                    className={cn(
+                      "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none",
+                      alert.is_active ? "bg-long" : "bg-surface-2 border border-border"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "absolute left-0.5 top-0.5 inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+                        alert.is_active ? "translate-x-4" : "translate-x-0"
+                      )}
+                    />
+                  </button>
+                  <button
+                    onClick={() => deleteMutation.mutate(alert.id)}
+                    className="p-1 rounded text-text-muted hover:text-short transition-colors"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
               </div>
-            </div>
+            </Panel>
           ))}
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center py-16 text-text-muted">
-          <Bell className="w-12 h-12 mb-4 opacity-30" />
-          <p className="text-lg font-medium">No alerts configured</p>
-          <p className="text-sm mt-1">Create your first alert to receive Telegram notifications</p>
+        <div className="flex flex-col items-center justify-center py-12 text-text-muted">
+          <Bell className="w-10 h-10 mb-3 opacity-30" />
+          <p className="text-sm font-medium">No alerts configured</p>
+          <p className="text-xs mt-1">Create your first rule to receive Telegram notifications</p>
         </div>
       )}
     </div>

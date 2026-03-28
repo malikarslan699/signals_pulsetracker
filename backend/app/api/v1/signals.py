@@ -10,16 +10,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_active_user
 from app.core.exceptions import NotFoundError, SubscriptionRequiredError
-from app.core.permissions import Permission, has_permission
 from app.database import get_db
 from app.models.user import User
 from app.redis_client import RedisClient, get_redis_client
 from app.schemas.signal import SignalFilter, SignalListResponse, SignalResponse
+from app.services.package_config_service import get_package, load_packages_config
 from app.services.signal_service import SignalService
 
 router = APIRouter(prefix="/signals", tags=["Signals"])
 
 _FREE_LIVE_SIGNAL_LIMIT = 5
+
+
+async def _get_user_package_features(current_user: User, redis: RedisClient):
+    config = await load_packages_config(redis)
+    pkg = get_package(config, current_user.plan) or get_package(config, "trial")
+    return pkg.features if pkg else None
+
+
+def _can_see_indicator_breakdown(current_user: User, features) -> bool:
+    if current_user.is_admin:
+        return True
+    if features is None:
+        return current_user.plan in ("monthly", "yearly", "lifetime")
+    return bool(features.advanced_indicator_breakdown)
+
+
+def _can_access_history(current_user: User, features) -> bool:
+    if current_user.is_admin:
+        return True
+    if features is None:
+        return current_user.plan in ("trial", "monthly", "yearly", "lifetime")
+    return bool(features.signal_history)
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +87,8 @@ async def list_signals(
     service = SignalService(db, redis)
     items, total = await service.get_signals(filters, page=page, limit=limit)
 
-    can_see_ict = has_permission(current_user, Permission.READ_ICT)
+    features = await _get_user_package_features(current_user, redis)
+    can_see_ict = _can_see_indicator_breakdown(current_user, features)
 
     signal_responses = []
     for signal in items:
@@ -110,7 +133,8 @@ async def live_signals(
     signals = await service.get_live_signals(min_confidence=min_confidence)
 
     is_free = current_user.plan == "trial"
-    can_see_ict = has_permission(current_user, Permission.READ_ICT)
+    features = await _get_user_package_features(current_user, redis)
+    can_see_ict = _can_see_indicator_breakdown(current_user, features)
 
     if is_free:
         signals = signals[:_FREE_LIVE_SIGNAL_LIMIT]
@@ -175,18 +199,30 @@ async def signal_history(
 ) -> list[SignalResponse]:
     """
     Return closed/expired signals from the past N days.
-    Requires monthly or lifetime subscription.
+    Access and max history window are controlled by package configuration.
     """
-    if current_user.plan not in ("monthly", "yearly", "lifetime") and not current_user.is_admin:
+    features = await _get_user_package_features(current_user, redis)
+    if not _can_access_history(current_user, features):
         raise SubscriptionRequiredError(
-            "Signal history requires a monthly or lifetime plan.",
-            required_plan="monthly",
+            "Signal history is not included in your current package.",
+            required_plan="trial",
         )
 
-    service = SignalService(db, redis)
-    signals = await service.get_signal_history(current_user.id, days=days)
+    max_days = getattr(features, "history_days", 0) if features else 0
+    effective_days = min(days, max_days) if max_days > 0 else days
 
-    return [SignalResponse.model_validate(s) for s in signals]
+    service = SignalService(db, redis)
+    signals = await service.get_signal_history(current_user.id, days=effective_days)
+
+    can_see_ict = _can_see_indicator_breakdown(current_user, features)
+    signal_responses: list[SignalResponse] = []
+    for signal in signals:
+        resp = SignalResponse.model_validate(signal)
+        if not can_see_ict:
+            resp.score_breakdown = None
+            resp.ict_zones = None
+        signal_responses.append(resp)
+    return signal_responses
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +251,8 @@ async def get_signal(
 
     resp = SignalResponse.model_validate(signal)
 
-    can_see_ict = has_permission(current_user, Permission.READ_ICT)
+    features = await _get_user_package_features(current_user, redis)
+    can_see_ict = _can_see_indicator_breakdown(current_user, features)
     if not can_see_ict:
         resp.score_breakdown = None
         resp.ict_zones = None

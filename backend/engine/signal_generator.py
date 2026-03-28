@@ -128,12 +128,12 @@ class SignalGenerator:
     )
     """
 
-    # Minimum confidence required to emit a signal (0-100)
-    # Set to 78 — tighter than before to reduce weak/marginal signals
-    MIN_CONFIDENCE: int = 78
+    # Minimum confidence required to emit a signal (0-100).
+    # Runtime scanner task can override this from admin config.
+    MIN_CONFIDENCE: int = 60
 
     # Minimum gap between long and short confidence to avoid ambiguous calls
-    MIN_DIRECTION_GAP: int = 20
+    MIN_DIRECTION_GAP: int = 12
 
     # Timeframe reliability weights used in MTF confidence boost calculation
     TF_WEIGHTS: dict[str, float] = {
@@ -320,9 +320,8 @@ class SignalGenerator:
         #   1H  signal → 4H  must be aligned
         #   4H+ signal → no mandatory gate (already a higher-TF decision)
         MTF_GATES: dict[str, str] = {
-            '5m':  '15m',
-            '15m': '1H',
-            '1H':  '4H',
+            # Keep strict confirmation on the noisiest TF only.
+            '5m': '15m',
         }
         required_tf = MTF_GATES.get(timeframe)
         if required_tf and required_tf in mtf_analysis:
@@ -351,8 +350,8 @@ class SignalGenerator:
         trend_hits = sum(1 for s in winner.trend_scores if s.triggered and s.score > 0)
         ict_hits = sum(1 for s in winner.ict_scores if s.triggered and s.score > 0)
         struct_hits = sum(1 for s in winner.structure_scores if s.triggered and s.score > 0)
-        if trend_hits == 0 and (ict_hits + struct_hits) < 2:
-            return None  # No trend + insufficient ICT/structure — reject
+        if trend_hits == 0 and (ict_hits + struct_hits) < 1:
+            return None  # No trend and no ICT/structure support — reject
 
         # ── Candle snapshot (last 5 candles) ──────────────────────────────
         snapshot_candles = candles[-5:]

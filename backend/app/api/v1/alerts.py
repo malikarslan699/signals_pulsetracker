@@ -6,7 +6,7 @@ from typing import List, Optional
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -223,7 +223,7 @@ async def delete_alert(
     summary="Send a test Telegram message to the current user",
 )
 async def test_alert(
-    payload: TestAlertRequest,
+    payload: TestAlertRequest = Body(default_factory=TestAlertRequest),
     current_user: User = Depends(get_current_active_user),
     redis: RedisClient = Depends(get_redis_client),
 ) -> dict:
