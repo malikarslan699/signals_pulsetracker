@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { formatTimeAgo, getStatusColor, getStatusLabel } from "@/lib/formatters";
 import {
@@ -9,6 +9,7 @@ import {
   Shield, Zap, Activity
 } from "lucide-react";
 import Link from "next/link";
+import toast from "react-hot-toast";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 interface QASignal {
@@ -18,6 +19,10 @@ interface QASignal {
   direction: string;
   timeframe: string;
   confidence: number;
+  setup_score?: number | null;
+  pwin_tp1?: number | null;
+  pwin_tp2?: number | null;
+  ranking_score?: number | null;
   status: string;
   pnl_pct: number | null;
   fired_at: string;
@@ -56,6 +61,24 @@ interface QAStats {
   by_direction: Array<{ direction: string; total: number; wins: number; losses: number; avg_pnl: number; win_rate: number | null }>;
   noisy_pairs: Array<{ symbol: string; signal_count: number; avg_confidence: number; wins: number; losses: number; win_rate: number | null }>;
   confidence_bands: Array<{ band: string; count: number; wins: number; losses: number; win_rate: number | null }>;
+  confidence_deciles: Array<{ decile: string; total: number; wins: number; losses: number; avg_pwin_tp1: number; avg_pwin_tp2: number; win_rate: number | null }>;
+  confidence_vs_win_rate: Array<{ decile: string; total: number; wins: number; losses: number; avg_pwin_tp1: number; avg_pwin_tp2: number; win_rate: number | null }>;
+  indicator_performance: Array<{ indicator: string; count: number; wins: number; losses: number; win_rate: number | null; quality_bias: number }>;
+  pair_health: Array<{
+    symbol: string;
+    market: string;
+    total_closed: number;
+    wins: number;
+    losses: number;
+    win_rate: number | null;
+    avg_pwin_tp1: number;
+    avg_pnl: number;
+    health_score: number;
+    health_status: string;
+    auto_disabled: boolean;
+    manual_override: boolean;
+    disable_reason?: string | null;
+  }>;
 }
 
 // ── Signal Row ─────────────────────────────────────────────────────────────
@@ -89,7 +112,10 @@ function SignalQARow({ signal }: { signal: QASignal }) {
           {isLong ? "↑ LONG" : "↓ SHORT"}
         </span>
         <span className="text-xs bg-surface-2 px-2 py-0.5 rounded text-text-muted w-10">{signal.timeframe}</span>
-        <span className="font-mono text-sm text-text-primary w-8">{signal.confidence}</span>
+        <div className="w-20 leading-tight">
+          <span className="block font-mono text-sm text-text-primary">{signal.pwin_tp1 ?? signal.confidence}</span>
+          <span className="block text-[10px] text-text-faint">S{signal.setup_score ?? "—"}</span>
+        </div>
         <span className={`text-xs w-20 ${statusColors[signal.status] || "text-text-muted"}`}>
           {getStatusLabel(signal.status)}
         </span>
@@ -199,6 +225,7 @@ export default function QALabPage() {
   const [filterTf, setFilterTf] = useState("ALL");
   const [filterMarket, setFilterMarket] = useState("ALL");
   const [activeTab, setActiveTab] = useState<"signals" | "stats" | "noisy" | "failures">("signals");
+  const queryClient = useQueryClient();
 
   const { data: logData, isLoading: logLoading } = useQuery({
     queryKey: ["qa-log", days, filterStatus, filterTf, filterMarket],
@@ -226,6 +253,22 @@ export default function QALabPage() {
 
   const signals: QASignal[] = logData?.signals || [];
   const stats: QAStats | null = statsData || null;
+
+  const overrideMutation = useMutation({
+    mutationFn: async ({ symbol, enabled }: { symbol: string; enabled: boolean }) => {
+      const res = await api.patch(`/api/v1/admin/qa/pair-health/${symbol}/override`, null, {
+        params: { enabled },
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(`${data.symbol} override ${data.manual_override ? "enabled" : "disabled"}.`);
+      queryClient.invalidateQueries({ queryKey: ["qa-stats"] });
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || "Override update failed.");
+    },
+  });
 
   const winRate = (wins: number, losses: number) =>
     wins + losses > 0 ? `${Math.round((wins / (wins + losses)) * 100)}%` : "—";
@@ -296,7 +339,7 @@ export default function QALabPage() {
             <span className="w-24">Pair</span>
             <span className="w-12">Dir</span>
             <span className="w-10">TF</span>
-            <span className="w-8">Conf</span>
+            <span className="w-20">P(TP1)</span>
             <span className="w-20">Status</span>
             <span className="w-16">PnL</span>
             <span>TF Alignment</span>
@@ -408,6 +451,70 @@ export default function QALabPage() {
                   </tbody>
                 </table>
               </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                    <p className="text-sm font-semibold text-text-primary">Confidence Deciles</p>
+                    <p className="text-xs text-text-muted mt-0.5">Calibrated TP1 probability grouped into deciles</p>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                      <th className="px-4 py-2 text-left">Decile</th>
+                      <th className="px-4 py-2 text-right">Signals</th>
+                      <th className="px-4 py-2 text-right">Win Rate</th>
+                      <th className="px-4 py-2 text-right">Avg P1</th>
+                      <th className="px-4 py-2 text-right">Avg P2</th>
+                    </tr></thead>
+                    <tbody>
+                      {stats.confidence_deciles.map((row) => (
+                        <tr key={row.decile} className="border-b border-border hover:bg-surface-2">
+                          <td className="px-4 py-2 font-mono text-text-primary">{row.decile}</td>
+                          <td className="px-4 py-2 text-right text-text-secondary">{row.total}</td>
+                          <td className="px-4 py-2 text-right font-mono">
+                            <span className={row.win_rate != null && row.win_rate >= 50 ? "text-long" : "text-short"}>
+                              {row.win_rate != null ? `${row.win_rate}%` : "—"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono text-blue">{row.avg_pwin_tp1 ?? "—"}%</td>
+                          <td className="px-4 py-2 text-right font-mono text-long">{row.avg_pwin_tp2 ?? "—"}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                    <p className="text-sm font-semibold text-text-primary">Indicator Performance Visibility</p>
+                    <p className="text-xs text-text-muted mt-0.5">Triggered indicators ranked by outcome quality</p>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                      <th className="px-4 py-2 text-left">Indicator</th>
+                      <th className="px-4 py-2 text-right">Count</th>
+                      <th className="px-4 py-2 text-right">Win Rate</th>
+                      <th className="px-4 py-2 text-right">Bias</th>
+                    </tr></thead>
+                    <tbody>
+                      {stats.indicator_performance.slice(0, 12).map((row) => (
+                        <tr key={row.indicator} className="border-b border-border hover:bg-surface-2">
+                          <td className="px-4 py-2 text-text-primary text-xs font-mono">{row.indicator}</td>
+                          <td className="px-4 py-2 text-right text-text-secondary">{row.count}</td>
+                          <td className="px-4 py-2 text-right font-mono">
+                            <span className={row.win_rate != null && row.win_rate >= 50 ? "text-long" : "text-short"}>
+                              {row.win_rate != null ? `${row.win_rate}%` : "—"}
+                            </span>
+                          </td>
+                          <td className={`px-4 py-2 text-right font-mono ${row.quality_bias >= 0 ? "text-long" : "text-short"}`}>
+                            {row.quality_bias > 0 ? "+" : ""}{row.quality_bias}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </>
           ) : null}
         </div>
@@ -419,49 +526,110 @@ export default function QALabPage() {
           {statsLoading ? (
             <div className="h-64 bg-surface border border-border rounded-xl animate-pulse" />
           ) : stats ? (
-            <div className="bg-surface border border-border rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-border">
-                <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-short" /> Most Active Pairs (last {days}d) — sorted by signal volume
-                </p>
-                <p className="text-xs text-text-muted mt-0.5">High count + low win rate = noisy pair needing tighter filters</p>
+            <div className="space-y-4">
+              <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-short" /> Most Active Pairs (last {days}d) — sorted by signal volume
+                  </p>
+                  <p className="text-xs text-text-muted mt-0.5">High count + low win rate = noisy pair needing tighter filters</p>
+                </div>
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                    <th className="px-4 py-2 text-left">Pair</th>
+                    <th className="px-4 py-2 text-right">Signals</th>
+                    <th className="px-4 py-2 text-right">Wins</th>
+                    <th className="px-4 py-2 text-right">Losses</th>
+                    <th className="px-4 py-2 text-right">Win Rate</th>
+                    <th className="px-4 py-2 text-right">Avg Conf</th>
+                    <th className="px-4 py-2 text-right">Verdict</th>
+                  </tr></thead>
+                  <tbody>
+                    {stats.noisy_pairs.map((row) => {
+                      const wr = row.win_rate;
+                      const isNoisy = row.signal_count >= 5 && (wr == null || wr < 40);
+                      const isGood = row.signal_count >= 3 && wr != null && wr >= 60;
+                      return (
+                        <tr key={row.symbol} className="border-b border-border hover:bg-surface-2">
+                          <td className="px-4 py-2 font-mono font-bold text-text-primary">{row.symbol}</td>
+                          <td className="px-4 py-2 text-right font-mono">{row.signal_count}</td>
+                          <td className="px-4 py-2 text-right text-long">{row.wins}</td>
+                          <td className="px-4 py-2 text-right text-short">{row.losses}</td>
+                          <td className="px-4 py-2 text-right font-mono">
+                            <span className={wr != null && wr >= 50 ? "text-long" : "text-short"}>
+                              {wr != null ? `${wr}%` : "—"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right text-text-muted">{row.avg_confidence}%</td>
+                          <td className="px-4 py-2 text-right">
+                            {isNoisy && <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-short">Noisy</span>}
+                            {isGood && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-long">Strong</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-              <table className="w-full text-sm">
-                <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
-                  <th className="px-4 py-2 text-left">Pair</th>
-                  <th className="px-4 py-2 text-right">Signals</th>
-                  <th className="px-4 py-2 text-right">Wins</th>
-                  <th className="px-4 py-2 text-right">Losses</th>
-                  <th className="px-4 py-2 text-right">Win Rate</th>
-                  <th className="px-4 py-2 text-right">Avg Conf</th>
-                  <th className="px-4 py-2 text-right">Verdict</th>
-                </tr></thead>
-                <tbody>
-                  {stats.noisy_pairs.map((row) => {
-                    const wr = row.win_rate;
-                    const isNoisy = row.signal_count >= 5 && (wr == null || wr < 40);
-                    const isGood = row.signal_count >= 3 && wr != null && wr >= 60;
-                    return (
+
+              <div className="bg-surface border border-border rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <p className="text-sm font-semibold text-text-primary">Pair Health & Auto-Filtering</p>
+                  <p className="text-xs text-text-muted mt-0.5">Admin override keeps a pair tradable even when auto-filtering would disable it.</p>
+                </div>
+                <table className="w-full text-sm">
+                  <thead><tr className="bg-surface-2 border-b border-border text-xs text-text-muted">
+                    <th className="px-4 py-2 text-left">Pair</th>
+                    <th className="px-4 py-2 text-right">Health</th>
+                    <th className="px-4 py-2 text-right">Win Rate</th>
+                    <th className="px-4 py-2 text-right">Avg P(TP1)</th>
+                    <th className="px-4 py-2 text-right">State</th>
+                    <th className="px-4 py-2 text-right">Override</th>
+                  </tr></thead>
+                  <tbody>
+                    {stats.pair_health.slice(0, 20).map((row) => (
                       <tr key={row.symbol} className="border-b border-border hover:bg-surface-2">
-                        <td className="px-4 py-2 font-mono font-bold text-text-primary">{row.symbol}</td>
-                        <td className="px-4 py-2 text-right font-mono">{row.signal_count}</td>
-                        <td className="px-4 py-2 text-right text-long">{row.wins}</td>
-                        <td className="px-4 py-2 text-right text-short">{row.losses}</td>
+                        <td className="px-4 py-2">
+                          <div className="font-mono font-bold text-text-primary">{row.symbol}</div>
+                          {row.disable_reason && (
+                            <div className="text-[10px] text-text-faint mt-0.5">{row.disable_reason}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-text-primary">{row.health_score}</td>
                         <td className="px-4 py-2 text-right font-mono">
-                          <span className={wr != null && wr >= 50 ? "text-long" : "text-short"}>
-                            {wr != null ? `${wr}%` : "—"}
+                          <span className={row.win_rate != null && row.win_rate >= 50 ? "text-long" : "text-short"}>
+                            {row.win_rate != null ? `${row.win_rate}%` : "—"}
                           </span>
                         </td>
-                        <td className="px-4 py-2 text-right text-text-muted">{row.avg_confidence}%</td>
+                        <td className="px-4 py-2 text-right font-mono text-blue">{row.avg_pwin_tp1 ? `${row.avg_pwin_tp1}%` : "—"}</td>
                         <td className="px-4 py-2 text-right">
-                          {isNoisy && <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-short">Noisy</span>}
-                          {isGood && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-long">Strong</span>}
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            row.health_status === "healthy" ? "bg-emerald-500/10 text-long" :
+                            row.health_status === "disabled" ? "bg-red-500/10 text-short" :
+                            row.health_status === "weak" ? "bg-yellow-500/10 text-yellow-400" :
+                            "bg-surface-2 text-text-muted"
+                          }`}>
+                            {row.health_status}{row.auto_disabled ? " · auto-off" : ""}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <button
+                            onClick={() => overrideMutation.mutate({ symbol: row.symbol, enabled: !row.manual_override })}
+                            className={`text-xs px-2 py-1 rounded border ${
+                              row.manual_override
+                                ? "bg-blue/10 text-blue border-blue/20"
+                                : "bg-surface-2 text-text-muted border-border"
+                            }`}
+                            disabled={overrideMutation.isPending}
+                          >
+                            {row.manual_override ? "Forced On" : "Auto"}
+                          </button>
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : null}
         </div>

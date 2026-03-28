@@ -56,11 +56,17 @@ class IntegrationConfig(BaseModel):
 class SystemConfig(BaseModel):
     scanner_interval_minutes: int = Field(default=10, ge=1, le=1440)
     min_signal_confidence: int = Field(default=75, ge=0, le=100)
+    scanner_timeframes: list[str] = Field(
+        default_factory=lambda: ["15m", "1H", "4H"]
+    )
     enable_crypto_scan: bool = True
     enable_forex_scan: bool = True
     maintenance_mode: bool = False
     scanner_enabled: bool = True
     max_signals_per_scan: int = Field(default=50, ge=1, le=5000)
+    per_symbol_daily_signal_limit: int = Field(default=2, ge=0, le=100)
+    global_daily_signal_limit: int = Field(default=25, ge=0, le=10000)
+    repeated_signal_cooldown_minutes: int = Field(default=180, ge=0, le=10080)
     ict_weight: float = Field(default=1.0, ge=0.0, le=5.0)
     trend_weight: float = Field(default=1.0, ge=0.0, le=5.0)
     momentum_weight: float = Field(default=1.0, ge=0.0, le=5.0)
@@ -95,6 +101,7 @@ def _coerce_legacy_weight(value: Any, default: float) -> float:
 
 def _normalize_raw_config(raw: dict[str, Any]) -> dict[str, Any]:
     data = dict(raw)
+    allowed_timeframes = {"5m", "15m", "1H", "4H", "1D"}
 
     # Backward compatibility with legacy config keys used by the first admin UI.
     if "min_confidence_threshold" in data and "min_signal_confidence" not in data:
@@ -102,11 +109,29 @@ def _normalize_raw_config(raw: dict[str, Any]) -> dict[str, Any]:
     if "volume_weight" in data and "trend_weight" not in data:
         data["trend_weight"] = data.get("volume_weight")
 
+    try:
+        data["min_signal_confidence"] = max(
+            75,
+            int(data.get("min_signal_confidence", 75) or 75),
+        )
+    except Exception:
+        data["min_signal_confidence"] = 75
+
     data["ict_weight"] = _coerce_legacy_weight(data.get("ict_weight", 1.0), 1.0)
     data["trend_weight"] = _coerce_legacy_weight(data.get("trend_weight", 1.0), 1.0)
     data["momentum_weight"] = _coerce_legacy_weight(
         data.get("momentum_weight", 1.0), 1.0
     )
+
+    raw_timeframes = data.get("scanner_timeframes")
+    if not isinstance(raw_timeframes, list):
+        raw_timeframes = ["15m", "1H", "4H"]
+    cleaned_timeframes = []
+    for tf in raw_timeframes:
+        value = str(tf or "").strip()
+        if value in allowed_timeframes and value not in cleaned_timeframes:
+            cleaned_timeframes.append(value)
+    data["scanner_timeframes"] = cleaned_timeframes or ["15m", "1H", "4H"]
 
     return data
 

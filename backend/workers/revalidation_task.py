@@ -12,6 +12,10 @@ from loguru import logger
 from workers.celery_app import app
 
 
+def _open_signal_key(symbol: str, direction: str, timeframe: str) -> str:
+    return f"signal:open:{symbol}:{direction}:{timeframe}"
+
+
 # ── Revalidation thresholds ────────────────────────────────────────────────
 # If price moves this fraction toward SL, signal is considered weakening
 SL_APPROACH_THRESHOLD = 0.70   # 70% of distance from entry to SL
@@ -139,12 +143,23 @@ def _invalidate_signal(r, signal: dict, raw_bytes, reason: str):
             with engine.connect() as conn:
                 conn.execute(text("""
                     UPDATE signals
-                    SET status = 'expired',
+                    SET status = 'INVALIDATED',
                         closed_at = NOW()
-                    WHERE id = :id AND status = 'active'
+                    WHERE id = :id AND status IN ('CREATED', 'ARMED', 'FILLED', 'active')
                 """), {"id": signal_id})
                 conn.commit()
     except Exception as e:
         logger.warning(f"[REVALIDATION] DB update error: {e}")
+
+    try:
+        r.delete(
+            _open_signal_key(
+                signal.get('symbol', ''),
+                signal.get('direction', ''),
+                signal.get('timeframe', ''),
+            )
+        )
+    except Exception:
+        pass
 
     logger.info(f"[REVALIDATION] Signal {signal_id} invalidated: {reason}")

@@ -163,14 +163,14 @@ def analyze_signal(
         risk_note = "SL not set"
 
     # ── Outcome summary ───────────────────────────────────────────────────
-    if status in ('tp1_hit', 'tp2_hit', 'tp3_hit'):
+    if status in ('tp1_hit', 'tp2_hit', 'tp3_hit', 'TP1_REACHED', 'TP2_REACHED'):
         tp_num = status[2]
         outcome = f"WIN — TP{tp_num} hit. PnL: {pnl_pct:+.2f}%" if pnl_pct is not None else f"WIN — TP{tp_num} hit"
-    elif status == 'sl_hit':
+    elif status in ('sl_hit', 'STOPPED'):
         outcome = f"LOSS — SL hit. PnL: {pnl_pct:+.2f}%" if pnl_pct is not None else "LOSS — SL hit"
-    elif status == 'expired':
+    elif status in ('expired', 'EXPIRED', 'invalidated', 'INVALIDATED'):
         outcome = "EXPIRED — price did not reach TP or SL within signal window"
-    elif status == 'active':
+    elif status in ('active', 'CREATED', 'ARMED', 'FILLED'):
         outcome = "ACTIVE — signal still open"
     else:
         outcome = f"STATUS: {status}"

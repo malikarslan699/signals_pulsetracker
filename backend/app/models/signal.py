@@ -10,6 +10,11 @@ from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.services.signal_lifecycle import (
+    LOSS_SIGNAL_STATUSES,
+    OPEN_SIGNAL_STATUSES,
+    WIN_SIGNAL_STATUSES,
+)
 
 
 class Signal(Base):
@@ -36,12 +41,26 @@ class Signal(Base):
 
     # Confidence & scoring
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    setup_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    pwin_tp1: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    pwin_tp2: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)
+    ranking_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True, index=True)
     raw_score: Mapped[int] = mapped_column(Integer, nullable=False)
     max_possible_score: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Price levels
     entry: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    entry_zone_low: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    entry_zone_high: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    entry_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     stop_loss: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    invalidation_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     take_profit_1: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
     take_profit_2: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(20, 8), nullable=True
@@ -67,6 +86,9 @@ class Signal(Base):
     # Timestamps
     fired_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+    valid_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -95,12 +117,12 @@ class Signal(Base):
 
     @property
     def is_active(self) -> bool:
-        return self.status == "active"
+        return self.status in OPEN_SIGNAL_STATUSES
 
     @property
     def hit_tp(self) -> bool:
-        return self.status in ("tp1_hit", "tp2_hit", "tp3_hit")
+        return self.status in WIN_SIGNAL_STATUSES
 
     @property
     def hit_sl(self) -> bool:
-        return self.status == "sl_hit"
+        return self.status in LOSS_SIGNAL_STATUSES

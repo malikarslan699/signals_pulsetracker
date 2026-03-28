@@ -14,8 +14,27 @@ from app.models.signal import Signal
 from app.config import get_settings
 from app.redis_client import RedisClient
 from app.schemas.signal import SignalCreate, SignalFilter
+from app.services.signal_lifecycle import (
+    LOSS_SIGNAL_STATUSES,
+    OPEN_SIGNAL_STATUSES,
+    WIN_SIGNAL_STATUSES,
+    is_final_status,
+)
 
 settings = get_settings()
+
+
+def _calc_rr(entry: float, stop_loss: float, take_profit: float | None) -> float | None:
+    try:
+        if take_profit is None:
+            return None
+        risk = abs(float(entry) - float(stop_loss))
+        if risk <= 0:
+            return None
+        reward = abs(float(take_profit) - float(entry))
+        return round(reward / risk, 2)
+    except Exception:
+        return None
 
 
 class SignalService:
@@ -42,8 +61,16 @@ class SignalService:
             direction=schema.direction,
             timeframe=schema.timeframe,
             confidence=schema.confidence,
+            setup_score=schema.setup_score,
+            pwin_tp1=schema.pwin_tp1,
+            pwin_tp2=schema.pwin_tp2,
+            ranking_score=schema.ranking_score,
             entry=schema.entry,
+            entry_zone_low=schema.entry_zone_low,
+            entry_zone_high=schema.entry_zone_high,
+            entry_type=schema.entry_type,
             stop_loss=schema.stop_loss,
+            invalidation_price=schema.invalidation_price,
             take_profit_1=schema.take_profit_1,
             take_profit_2=schema.take_profit_2,
             take_profit_3=schema.take_profit_3,
@@ -54,8 +81,9 @@ class SignalService:
             ict_zones=schema.ict_zones,
             candle_snapshot=schema.candle_snapshot,
             mtf_analysis=schema.mtf_analysis,
+            valid_until=schema.valid_until,
             expires_at=schema.expires_at,
-            status="active",
+            status=schema.status or "CREATED",
             alert_sent=False,
         )
         self._db.add(signal)
@@ -164,12 +192,12 @@ class SignalService:
         now = datetime.now(tz=timezone.utc)
         result = await self._db.execute(
             select(Signal)
-            .where(Signal.status == "active")
+            .where(Signal.status.in_(tuple(OPEN_SIGNAL_STATUSES)))
             .where(Signal.confidence >= min_confidence)
             .where(
                 (Signal.expires_at == None) | (Signal.expires_at > now)  # noqa: E711
             )
-            .order_by(Signal.confidence.desc())
+            .order_by(Signal.ranking_score.desc().nullslast(), Signal.confidence.desc())
             .limit(100)
         )
         signals = list(result.scalars().all())
@@ -183,7 +211,7 @@ class SignalService:
         result = await self._db.execute(
             select(Signal)
             .where(Signal.fired_at >= from_date)
-            .where(Signal.status != "active")
+            .where(~Signal.status.in_(tuple(OPEN_SIGNAL_STATUSES)))
             .order_by(Signal.fired_at.desc())
             .limit(500)
         )
@@ -219,7 +247,7 @@ class SignalService:
                 signal.pnl_pct = Decimal(str(round(pnl, 4)))
 
         # Remove from Redis active set if closed
-        if status in ("tp1_hit", "tp2_hit", "tp3_hit", "sl_hit", "expired"):
+        if is_final_status(status):
             await self._redis.remove_signal(signal.symbol)
 
         await self._db.flush()
@@ -262,7 +290,7 @@ class SignalService:
             select(func.count())
             .select_from(Signal)
             .where(Signal.fired_at >= ninety_days_ago)
-            .where(Signal.status.in_(["tp1_hit", "tp2_hit", "tp3_hit"]))
+            .where(Signal.status.in_(tuple(WIN_SIGNAL_STATUSES)))
         )
         tp_count: int = tp_result.scalar_one()
 
@@ -270,7 +298,7 @@ class SignalService:
             select(func.count())
             .select_from(Signal)
             .where(Signal.fired_at >= ninety_days_ago)
-            .where(Signal.status == "sl_hit")
+            .where(Signal.status.in_(tuple(LOSS_SIGNAL_STATUSES)))
         )
         sl_count: int = sl_result.scalar_one()
 
@@ -283,7 +311,7 @@ class SignalService:
             select(func.count())
             .select_from(Signal)
             .where(Signal.fired_at >= seven_days_ago)
-            .where(Signal.status.in_(["tp1_hit", "tp2_hit", "tp3_hit"]))
+            .where(Signal.status.in_(tuple(WIN_SIGNAL_STATUSES)))
         )
         tp_7d_count: int = tp_7d_result.scalar_one()
 
@@ -291,7 +319,7 @@ class SignalService:
             select(func.count())
             .select_from(Signal)
             .where(Signal.fired_at >= seven_days_ago)
-            .where(Signal.status == "sl_hit")
+            .where(Signal.status.in_(tuple(LOSS_SIGNAL_STATUSES)))
         )
         sl_7d_count: int = sl_7d_result.scalar_one()
         closed_7d = tp_7d_count + sl_7d_count
@@ -309,7 +337,7 @@ class SignalService:
         active_result = await self._db.execute(
             select(func.count())
             .select_from(Signal)
-            .where(Signal.status == "active")
+            .where(Signal.status.in_(tuple(OPEN_SIGNAL_STATUSES)))
         )
         active_signals: int = active_result.scalar_one()
 
@@ -387,9 +415,9 @@ class SignalService:
             }
 
         tp_count = sum(
-            1 for s in signals if s.status in ("tp1_hit", "tp2_hit", "tp3_hit")
+            1 for s in signals if s.status in WIN_SIGNAL_STATUSES
         )
-        sl_count = sum(1 for s in signals if s.status == "sl_hit")
+        sl_count = sum(1 for s in signals if s.status in LOSS_SIGNAL_STATUSES)
         closed = tp_count + sl_count
         win_rate = round((tp_count / closed * 100) if closed > 0 else 0, 1)
 
@@ -412,6 +440,10 @@ class SignalService:
     # ------------------------------------------------------------------
     def _signal_to_dict(self, signal: Signal) -> dict:
         """Serialize a Signal ORM object to a JSON-safe dict."""
+        entry = float(signal.entry)
+        stop_loss = float(signal.stop_loss)
+        take_profit_1 = float(signal.take_profit_1)
+        take_profit_2 = float(signal.take_profit_2) if signal.take_profit_2 else None
         return {
             "id": str(signal.id),
             "pair_id": str(signal.pair_id),
@@ -420,12 +452,22 @@ class SignalService:
             "direction": signal.direction,
             "timeframe": signal.timeframe,
             "confidence": signal.confidence,
-            "entry": float(signal.entry),
-            "stop_loss": float(signal.stop_loss),
-            "take_profit_1": float(signal.take_profit_1),
-            "take_profit_2": float(signal.take_profit_2) if signal.take_profit_2 else None,
+            "setup_score": signal.setup_score,
+            "pwin_tp1": float(signal.pwin_tp1) if signal.pwin_tp1 is not None else None,
+            "pwin_tp2": float(signal.pwin_tp2) if signal.pwin_tp2 is not None else None,
+            "ranking_score": float(signal.ranking_score) if signal.ranking_score is not None else None,
+            "entry": entry,
+            "entry_zone_low": float(signal.entry_zone_low) if signal.entry_zone_low is not None else None,
+            "entry_zone_high": float(signal.entry_zone_high) if signal.entry_zone_high is not None else None,
+            "entry_type": signal.entry_type,
+            "stop_loss": stop_loss,
+            "invalidation_price": float(signal.invalidation_price) if signal.invalidation_price is not None else None,
+            "take_profit_1": take_profit_1,
+            "take_profit_2": take_profit_2,
             "take_profit_3": float(signal.take_profit_3) if signal.take_profit_3 else None,
             "rr_ratio": float(signal.rr_ratio) if signal.rr_ratio else None,
+            "rr_tp1": _calc_rr(entry, stop_loss, take_profit_1),
+            "rr_tp2": _calc_rr(entry, stop_loss, take_profit_2),
             "raw_score": signal.raw_score,
             "max_possible_score": signal.max_possible_score,
             "status": signal.status,
@@ -433,6 +475,7 @@ class SignalService:
             "ict_zones": signal.ict_zones,
             "mtf_analysis": signal.mtf_analysis,
             "fired_at": signal.fired_at.isoformat() if signal.fired_at else None,
+            "valid_until": signal.valid_until.isoformat() if signal.valid_until else None,
             "expires_at": signal.expires_at.isoformat() if signal.expires_at else None,
             "alert_sent": signal.alert_sent,
         }

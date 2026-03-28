@@ -72,16 +72,29 @@ export function getStatusLabel(status: string): string {
   switch (status) {
     case "active":
       return "Active";
+    case "CREATED":
+      return "Created";
+    case "ARMED":
+      return "Armed";
+    case "FILLED":
+      return "Filled";
     case "tp1_hit":
+    case "TP1_REACHED":
       return "TP1 Hit ✅";
     case "tp2_hit":
+    case "TP2_REACHED":
       return "TP2 Hit 🎯";
     case "tp3_hit":
       return "TP3 Hit 🎯";
     case "sl_hit":
+    case "STOPPED":
       return "SL Hit ❌";
     case "expired":
+    case "EXPIRED":
       return "Expired";
+    case "invalidated":
+    case "INVALIDATED":
+      return "Invalidated";
     default:
       return status;
   }
@@ -90,14 +103,23 @@ export function getStatusLabel(status: string): string {
 export function getStatusColor(status: string): string {
   switch (status) {
     case "active":
+    case "CREATED":
+    case "ARMED":
+    case "FILLED":
       return "text-blue";
     case "tp1_hit":
     case "tp2_hit":
     case "tp3_hit":
+    case "TP1_REACHED":
+    case "TP2_REACHED":
       return "text-long";
     case "sl_hit":
+    case "STOPPED":
       return "text-short";
     case "expired":
+    case "EXPIRED":
+    case "invalidated":
+    case "INVALIDATED":
       return "text-text-muted";
     default:
       return "text-text-muted";

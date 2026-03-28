@@ -1,12 +1,15 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 interface SignalLevels {
   direction: string;
   entry: number;
+  entry_zone_low?: number;
+  entry_zone_high?: number;
   stop_loss: number;
+  invalidation_price?: number;
   take_profit_1: number;
   take_profit_2: number;
 }
@@ -44,7 +47,8 @@ export function TradingViewChart({
 }: TradingViewChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
-  const seriesRef = useRef<any>(null);
+  const seriesRefs = useRef<any[]>([]);
+  const [chartError, setChartError] = useState<string | null>(null);
 
   const { data: candles, isLoading, isError, error, refetch } = useQuery<Candle[]>({
     queryKey: ["candles", symbol, timeframe],
@@ -67,30 +71,43 @@ export function TradingViewChart({
     enabled: Boolean(symbol && timeframe),
   });
 
+  const sortedCandles = useMemo(
+    () => (candles && candles.length > 0 ? [...candles].sort((a, b) => a.time - b.time) : []),
+    [candles]
+  );
+
   useEffect(() => {
     if (!containerRef.current) return;
+    if (!sortedCandles.length) return;
 
     let chart: any;
     let resizeObserver: ResizeObserver;
 
     const init = async () => {
       try {
+        setChartError(null);
         const { createChart, ColorType, LineStyle } = await import(
           "lightweight-charts"
         );
 
+        if (chartRef.current) {
+          chartRef.current.remove();
+          chartRef.current = null;
+          seriesRefs.current = [];
+        }
+
         chart = createChart(containerRef.current!, {
           layout: {
-            background: { type: ColorType.Solid, color: "#111827" },
-            textColor: "#6B7280",
+            background: { type: ColorType.Solid, color: "#0E1726" },
+            textColor: "#94A3B8",
           },
           grid: {
-            vertLines: { color: "#1F2937" },
-            horzLines: { color: "#1F2937" },
+            vertLines: { color: "#1E293B" },
+            horzLines: { color: "#1E293B" },
           },
           crosshair: {
-            vertLine: { color: "#374151" },
-            horzLine: { color: "#374151" },
+            vertLine: { color: "#334155" },
+            horzLine: { color: "#334155" },
           },
           rightPriceScale: {
             borderColor: "#374151",
@@ -115,80 +132,113 @@ export function TradingViewChart({
           wickDownColor: "#EF4444",
         });
 
-        seriesRef.current = candleSeries;
-
-        if (candles && candles.length > 0) {
-          const sorted = [...candles].sort((a, b) => a.time - b.time);
-          candleSeries.setData(sorted);
-        }
+        seriesRefs.current = [candleSeries];
+        candleSeries.setData(sortedCandles);
 
         // Draw signal levels
         if (signal) {
           const lineStyle = LineStyle.Dashed;
+          const start = sortedCandles[0].time;
+          const end = sortedCandles[sortedCandles.length - 1].time;
+
+          if (signal.entry_zone_low != null && signal.entry_zone_high != null) {
+            const zoneLowSeries = chart.addLineSeries({
+              color: "rgba(245, 158, 11, 0.45)",
+              lineWidth: 1,
+              lineStyle,
+              title: "Zone Low",
+              priceLineVisible: false,
+            });
+            zoneLowSeries.setData([
+              { time: start, value: signal.entry_zone_low },
+              { time: end, value: signal.entry_zone_low },
+            ]);
+            seriesRefs.current.push(zoneLowSeries);
+
+            const zoneHighSeries = chart.addLineSeries({
+              color: "rgba(245, 158, 11, 0.45)",
+              lineWidth: 1,
+              lineStyle,
+              title: "Zone High",
+              priceLineVisible: false,
+            });
+            zoneHighSeries.setData([
+              { time: start, value: signal.entry_zone_high },
+              { time: end, value: signal.entry_zone_high },
+            ]);
+            seriesRefs.current.push(zoneHighSeries);
+          }
 
           // Entry line (gold)
-          chart.addLineSeries({
+          const entrySeries = chart.addLineSeries({
             color: "#F59E0B",
             lineWidth: 1,
             lineStyle,
             title: "Entry",
             priceLineVisible: false,
-          }).setData(
-            candles?.length
-              ? [
-                  { time: candles[0].time, value: signal.entry },
-                  { time: candles[candles.length - 1].time, value: signal.entry },
-                ]
-              : []
-          );
+          });
+          entrySeries.setData([
+            { time: start, value: signal.entry },
+            { time: end, value: signal.entry },
+          ]);
+          seriesRefs.current.push(entrySeries);
 
           // Stop Loss line (red)
-          chart.addLineSeries({
+          const stopSeries = chart.addLineSeries({
             color: "#EF4444",
             lineWidth: 1,
             lineStyle,
             title: "SL",
             priceLineVisible: false,
-          }).setData(
-            candles?.length
-              ? [
-                  { time: candles[0].time, value: signal.stop_loss },
-                  { time: candles[candles.length - 1].time, value: signal.stop_loss },
-                ]
-              : []
-          );
+          });
+          stopSeries.setData([
+            { time: start, value: signal.stop_loss },
+            { time: end, value: signal.stop_loss },
+          ]);
+          seriesRefs.current.push(stopSeries);
+
+          if (signal.invalidation_price != null) {
+            const invalidationSeries = chart.addLineSeries({
+              color: "rgba(239, 68, 68, 0.55)",
+              lineWidth: 1,
+              lineStyle: LineStyle.Dotted,
+              title: "Invalidation",
+              priceLineVisible: false,
+            });
+            invalidationSeries.setData([
+              { time: start, value: signal.invalidation_price },
+              { time: end, value: signal.invalidation_price },
+            ]);
+            seriesRefs.current.push(invalidationSeries);
+          }
 
           // TP1 line (light green)
-          chart.addLineSeries({
+          const tp1Series = chart.addLineSeries({
             color: "#34D399",
             lineWidth: 1,
             lineStyle,
             title: "TP1",
             priceLineVisible: false,
-          }).setData(
-            candles?.length
-              ? [
-                  { time: candles[0].time, value: signal.take_profit_1 },
-                  { time: candles[candles.length - 1].time, value: signal.take_profit_1 },
-                ]
-              : []
-          );
+          });
+          tp1Series.setData([
+            { time: start, value: signal.take_profit_1 },
+            { time: end, value: signal.take_profit_1 },
+          ]);
+          seriesRefs.current.push(tp1Series);
 
           // TP2 line (green)
-          chart.addLineSeries({
+          const tp2Series = chart.addLineSeries({
             color: "#10B981",
             lineWidth: 1,
             lineStyle,
             title: "TP2",
             priceLineVisible: false,
-          }).setData(
-            candles?.length
-              ? [
-                  { time: candles[0].time, value: signal.take_profit_2 },
-                  { time: candles[candles.length - 1].time, value: signal.take_profit_2 },
-                ]
-              : []
-          );
+          });
+          tp2Series.setData([
+            { time: start, value: signal.take_profit_2 },
+            { time: end, value: signal.take_profit_2 },
+          ]);
+          seriesRefs.current.push(tp2Series);
         }
 
         chart.timeScale().fitContent();
@@ -203,6 +253,7 @@ export function TradingViewChart({
         resizeObserver.observe(containerRef.current!);
       } catch (err) {
         console.error("Chart init error:", err);
+        setChartError("Chart renderer failed. Falling back to summary mode.");
       }
     };
 
@@ -213,10 +264,10 @@ export function TradingViewChart({
       if (chart) {
         chart.remove();
         chartRef.current = null;
-        seriesRef.current = null;
+        seriesRefs.current = [];
       }
     };
-  }, [candles, signal, height]);
+  }, [sortedCandles, signal, height]);
 
   if (isLoading) {
     return (
@@ -257,6 +308,28 @@ export function TradingViewChart({
         style={{ height }}
       >
         No chart candles available.
+      </div>
+    );
+  }
+
+  if (chartError) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-3 bg-surface-2 text-text-muted text-xs p-4"
+        style={{ height }}
+      >
+        <span>{chartError}</span>
+        {signal && (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px]">
+            <span>Entry</span><span>{signal.entry}</span>
+            <span>Zone</span><span>{signal.entry_zone_low ?? "—"} - {signal.entry_zone_high ?? "—"}</span>
+            <span>SL</span><span>{signal.stop_loss}</span>
+            <span>TP1 / TP2</span><span>{signal.take_profit_1} / {signal.take_profit_2}</span>
+          </div>
+        )}
+        <button onClick={() => refetch()} className="filter-pill">
+          Retry
+        </button>
       </div>
     );
   }

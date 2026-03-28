@@ -130,12 +130,12 @@ def purge_low_quality_signals(min_confidence: int | None = None):
             raw_cfg = r.get('admin:system_config')
             if raw_cfg:
                 cfg = json.loads(raw_cfg)
-                min_confidence = int(cfg.get('min_signal_confidence', 60) or 60)
+                min_confidence = int(cfg.get('min_signal_confidence', 75) or 75)
             else:
-                min_confidence = 60
+                min_confidence = 75
         except Exception:
-            min_confidence = 60
-    min_confidence = max(0, min(100, int(min_confidence)))
+            min_confidence = 75
+    min_confidence = max(75, min(100, int(min_confidence)))
     purged_redis = 0
     expired_db = 0
 

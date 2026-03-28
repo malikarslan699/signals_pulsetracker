@@ -11,6 +11,7 @@ interface SignalRowProps {
 
 export function SignalRow({ signal }: SignalRowProps) {
   const isLong = signal.direction === "LONG";
+  const probability = signal.pwin_tp1 ?? signal.confidence;
 
   return (
     <Link href={`/signal/${signal.id}`}>
@@ -27,16 +28,18 @@ export function SignalRow({ signal }: SignalRowProps) {
 
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex-1 min-w-[56px]">
-            <ConfidenceBar value={signal.confidence} showLabel={false} />
+            <ConfidenceBar value={probability} showLabel={false} />
           </div>
-          <ConfidenceBadge value={signal.confidence} className="w-8 text-right" />
+          <ConfidenceBadge value={probability} className="w-8 text-right" />
         </div>
 
         <span className="text-right text-gold">{formatPrice(signal.entry)}</span>
         <span className="text-right text-short">{formatPrice(signal.stop_loss)}</span>
         <span className="text-right text-long">{formatPrice(signal.take_profit_1)}</span>
 
-        <span className="text-right text-text-secondary">{signal.rr_ratio}R</span>
+        <span className="text-right text-text-secondary">
+          {signal.rr_tp1 != null ? `${signal.rr_tp1}R` : "—"}
+        </span>
 
         <StatusBadge status={signal.status} />
 

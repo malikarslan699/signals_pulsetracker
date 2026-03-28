@@ -22,6 +22,41 @@ router = APIRouter(prefix="/signals", tags=["Signals"])
 _FREE_LIVE_SIGNAL_LIMIT = 5
 
 
+def _calc_rr(entry, stop_loss, take_profit):
+    try:
+        if take_profit is None:
+            return None
+        risk = abs(float(entry) - float(stop_loss))
+        if risk <= 0:
+            return None
+        reward = abs(float(take_profit) - float(entry))
+        return round(reward / risk, 2)
+    except Exception:
+        return None
+
+
+def _attach_rr_fields(resp: SignalResponse) -> SignalResponse:
+    resp.rr_tp1 = _calc_rr(resp.entry, resp.stop_loss, resp.take_profit_1)
+    resp.rr_tp2 = _calc_rr(resp.entry, resp.stop_loss, resp.take_profit_2)
+    if resp.top_confluences is None and resp.score_breakdown:
+        ranked = []
+        for key, value in (resp.score_breakdown or {}).items():
+            if not isinstance(value, dict) or not value.get("triggered"):
+                continue
+            try:
+                score = float(value.get("score", 0) or 0)
+            except Exception:
+                score = 0.0
+            if score <= 0:
+                continue
+            details = str(value.get("details") or "").strip()
+            label = str(key).split("/", 1)[-1]
+            ranked.append((score, f"{label}: {details}" if details else label))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        resp.top_confluences = [item[1] for item in ranked[:6]]
+    return resp
+
+
 async def _get_user_package_features(current_user: User, redis: RedisClient):
     config = await load_packages_config(redis)
     pkg = get_package(config, current_user.plan) or get_package(config, "trial")
@@ -93,6 +128,7 @@ async def list_signals(
     signal_responses = []
     for signal in items:
         resp = SignalResponse.model_validate(signal)
+        resp = _attach_rr_fields(resp)
         if not can_see_ict:
             resp.score_breakdown = None
             resp.ict_zones = None
@@ -218,6 +254,7 @@ async def signal_history(
     signal_responses: list[SignalResponse] = []
     for signal in signals:
         resp = SignalResponse.model_validate(signal)
+        resp = _attach_rr_fields(resp)
         if not can_see_ict:
             resp.score_breakdown = None
             resp.ict_zones = None
@@ -250,6 +287,7 @@ async def get_signal(
         raise NotFoundError("Signal", signal_id)
 
     resp = SignalResponse.model_validate(signal)
+    resp = _attach_rr_fields(resp)
 
     features = await _get_user_package_features(current_user, redis)
     can_see_ict = _can_see_indicator_breakdown(current_user, features)

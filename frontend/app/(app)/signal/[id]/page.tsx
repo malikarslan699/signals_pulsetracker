@@ -10,15 +10,12 @@ import { ConfidenceBar } from "@/components/terminal/ConfidenceBar";
 import {
   ArrowLeft,
   Share2,
-  TrendingUp,
-  TrendingDown,
   Clock,
   Target,
-  Activity,
   CheckCircle2,
   XCircle,
   Shield,
-  Minus,
+  Info,
 } from "lucide-react";
 import {
   formatPrice,
@@ -66,6 +63,10 @@ export default function SignalDetailPage() {
   const isLong = signal.direction === "LONG";
   const bandColor = confidenceBandColor(signal.confidence);
   const bandLabel = confidenceBandLabel(signal.confidence);
+  const htfEntries = Object.entries(signal.mtf_analysis || {}).filter(([tf]) => tf === "1H" || tf === "4H");
+  const probabilityTp1 = signal.pwin_tp1 ?? signal.confidence;
+  const probabilityTp2 = signal.pwin_tp2 ?? null;
+  const setupScore = signal.setup_score ?? signal.raw_score ?? signal.confidence;
 
   const handleShare = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -99,10 +100,10 @@ export default function SignalDetailPage() {
       {/* Hero Stats Row */}
       <div className="flex items-center gap-4 px-3 py-2.5 bg-surface border border-border rounded flex-wrap">
         <div className="flex items-center gap-2">
-          <span className="text-2xs text-text-muted uppercase">Confidence</span>
-          <ConfidenceBar value={signal.confidence} className="w-24" />
+          <span className="text-2xs text-text-muted uppercase">P(TP1)</span>
+          <ConfidenceBar value={probabilityTp1} className="w-24" />
           <span className="text-2xs font-mono font-bold" style={{ color: bandColor }}>
-            {signal.confidence}
+            {probabilityTp1}
           </span>
           <span className="text-2xs px-1.5 py-0.5 rounded font-medium border" style={{
             color: bandColor,
@@ -114,8 +115,31 @@ export default function SignalDetailPage() {
         </div>
         <div className="h-4 w-px bg-border" />
         <div className="flex items-center gap-1.5">
-          <span className="text-2xs text-text-muted uppercase">RR</span>
-          <span className="font-mono font-bold text-sm text-gold">{signal.rr_ratio}:1</span>
+          <span className="text-2xs text-text-muted uppercase">Setup</span>
+          <span className="font-mono font-bold text-sm text-text-primary">{setupScore}/100</span>
+        </div>
+        {probabilityTp2 != null && (
+          <>
+            <div className="h-4 w-px bg-border" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-2xs text-text-muted uppercase">P(TP2)</span>
+              <span className="font-mono font-bold text-sm text-long">{probabilityTp2}%</span>
+            </div>
+          </>
+        )}
+        <div className="h-4 w-px bg-border" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-2xs text-text-muted uppercase">RR TP1</span>
+          <span className="font-mono font-bold text-sm text-gold">
+            {signal.rr_tp1 != null ? `${signal.rr_tp1}:1` : "—"}
+          </span>
+        </div>
+        <div className="h-4 w-px bg-border" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-2xs text-text-muted uppercase">RR TP2</span>
+          <span className="font-mono font-bold text-sm text-gold">
+            {signal.rr_tp2 != null ? `${signal.rr_tp2}:1` : "—"}
+          </span>
         </div>
         {signal.pnl_pct != null && (
           <>
@@ -136,6 +160,15 @@ export default function SignalDetailPage() {
           <Clock className="h-3 w-3 text-text-muted" />
           <span className="text-2xs text-text-muted">{formatTimeAgo(signal.fired_at)} · {formatDateTime(signal.fired_at)}</span>
         </div>
+        {signal.ranking_score != null && (
+          <>
+            <div className="h-4 w-px bg-border" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-2xs text-text-muted uppercase">Rank</span>
+              <span className="font-mono font-bold text-sm text-purple">{signal.ranking_score}</span>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -148,7 +181,10 @@ export default function SignalDetailPage() {
               signal={{
                 direction: signal.direction,
                 entry: signal.entry,
+                entry_zone_low: signal.entry_zone_low,
+                entry_zone_high: signal.entry_zone_high,
                 stop_loss: signal.stop_loss,
+                invalidation_price: signal.invalidation_price,
                 take_profit_1: signal.take_profit_1,
                 take_profit_2: signal.take_profit_2,
               }}
@@ -161,7 +197,11 @@ export default function SignalDetailPage() {
           <Panel title="Price Levels" noPad>
             {[
               { label: "Entry", value: formatPrice(signal.entry), color: "text-gold" },
+              ...(signal.entry_zone_low != null && signal.entry_zone_high != null ? [
+                { label: "Entry Zone", value: `${formatPrice(signal.entry_zone_low)} - ${formatPrice(signal.entry_zone_high)}`, color: "text-gold" },
+              ] : []),
               { label: "Stop Loss", value: formatPrice(signal.stop_loss), color: "text-short" },
+              ...(signal.invalidation_price != null ? [{ label: "Invalidation", value: formatPrice(signal.invalidation_price), color: "text-short" }] : []),
               { label: "TP1", value: formatPrice(signal.take_profit_1), color: "text-long" },
               { label: "TP2", value: formatPrice(signal.take_profit_2), color: "text-long" },
               ...(signal.take_profit_3 ? [{ label: "TP3", value: formatPrice(signal.take_profit_3), color: "text-long" }] : []),
@@ -176,6 +216,36 @@ export default function SignalDetailPage() {
             ))}
           </Panel>
 
+          <Panel title="Execution Plan" noPad>
+            <div className="px-3 py-2 text-xs border-b border-border">
+              <span className="text-text-muted">Entry Type</span>
+              <p className="text-text-primary font-semibold mt-1">{signal.entry_type || "Market retest"}</p>
+            </div>
+            <div className="px-3 py-2 text-xs border-b border-border">
+              <span className="text-text-muted">Trust Summary</span>
+              <p className="text-text-primary mt-1">
+                {signal.direction} setup with {setupScore}/100 structure quality and {probabilityTp1}% calibrated TP1 probability.
+                {probabilityTp2 != null ? ` TP2 follow-through is estimated at ${probabilityTp2}%.` : ""}
+              </p>
+            </div>
+            <div className="px-3 py-2 text-xs">
+              <span className="text-text-muted">HTF Trend Lock</span>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {htfEntries.length > 0 ? htfEntries.map(([tf, data]: [string, any]) => (
+                  <span
+                    key={tf}
+                    className={cn(
+                      "px-2 py-1 rounded border text-[11px] font-medium",
+                      data.aligned ? "bg-long/10 text-long border-long/20" : "bg-short/10 text-short border-short/20"
+                    )}
+                  >
+                    {tf}: {data.direction || "—"} {data.aligned ? "aligned" : "conflict"}
+                  </span>
+                )) : <span className="text-text-muted">No HTF bias snapshot</span>}
+              </div>
+            </div>
+          </Panel>
+
           {signal.top_confluences && signal.top_confluences.length > 0 && (
             <Panel title="Top Confluences" noPad>
               {signal.top_confluences.map((c: string, i: number) => (
@@ -188,6 +258,38 @@ export default function SignalDetailPage() {
           )}
         </div>
       </div>
+
+      <Panel title="Signal Explanation" noPad>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-border">
+          <div className="bg-surface px-3 py-3 text-xs">
+            <div className="flex items-center gap-2 text-text-primary font-semibold mb-2">
+              <Shield className="h-3.5 w-3.5 text-purple" />
+              Why It Passed
+            </div>
+            <p className="text-text-secondary leading-5">
+              Phase 2 gating accepted this setup only after HTF trend, structure, and entry-zone checks aligned. Phase 3 then ranked it with calibrated win probabilities instead of raw indicator inflation.
+            </p>
+          </div>
+          <div className="bg-surface px-3 py-3 text-xs">
+            <div className="flex items-center gap-2 text-text-primary font-semibold mb-2">
+              <Info className="h-3.5 w-3.5 text-blue" />
+              Execution Context
+            </div>
+            <p className="text-text-secondary leading-5">
+              Planned entry uses the highlighted zone, invalidation sits at the broken structure edge, and TP1/TP2 are mapped to progressively deeper liquidity targets.
+            </p>
+          </div>
+          <div className="bg-surface px-3 py-3 text-xs">
+            <div className="flex items-center gap-2 text-text-primary font-semibold mb-2">
+              <CheckCircle2 className="h-3.5 w-3.5 text-long" />
+              What To Trust
+            </div>
+            <p className="text-text-secondary leading-5">
+              Setup score measures structural quality. P(TP1) and P(TP2) estimate outcome likelihood. Rank decides which setups surface first when the scanner has multiple valid candidates.
+            </p>
+          </div>
+        </div>
+      </Panel>
 
       {/* MTF Analysis & Indicator Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

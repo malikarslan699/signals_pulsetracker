@@ -39,7 +39,10 @@ def format_signal_message(signal: dict) -> str:
     sl = signal.get('stop_loss', 0)
     tp1 = signal.get('take_profit_1', 0)
     tp2 = signal.get('take_profit_2', tp1)
-    rr = signal.get('rr_ratio', 0)
+    rr_tp1 = signal.get('rr_tp1')
+    rr_tp2 = signal.get('rr_tp2')
+    if rr_tp2 is None:
+        rr_tp2 = signal.get('rr_ratio', 0)
     symbol = signal.get('symbol', '')
     timeframe = signal.get('timeframe', '')
     market = signal.get('market', 'crypto').upper()
@@ -72,7 +75,8 @@ def format_signal_message(signal: dict) -> str:
 🛑 <b>Stop Loss:</b>  {fmt(sl)} (-{sl_pct:.1f}%)
 🎯 <b>TP1:</b>        {fmt(tp1)} (+{tp1_pct:.1f}%)
 🎯 <b>TP2:</b>        {fmt(tp2)} (+{tp2_pct:.1f}%)
-⚖️ <b>R:R Ratio:</b>  1:{rr:.1f}
+⚖️ <b>R:R TP1:</b>    1:{float(rr_tp1 or 0):.1f}
+⚖️ <b>R:R TP2:</b>    1:{float(rr_tp2 or 0):.1f}
 
 <b>📊 Key Confluences:</b>
 {conf_text}

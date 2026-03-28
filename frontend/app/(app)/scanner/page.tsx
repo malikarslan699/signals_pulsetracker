@@ -13,7 +13,7 @@ import { FilterBar } from "@/components/terminal/FilterBar";
 import { Panel } from "@/components/terminal/Panel";
 import { api } from "@/lib/api";
 
-type SortField = "symbol" | "confidence" | "rr_ratio" | "fired_at" | "direction";
+type SortField = "symbol" | "confidence" | "rr_tp1" | "fired_at" | "direction";
 type SortDir = "asc" | "desc";
 const FAVORITES_KEY = "scanner:favorites:v1";
 
@@ -51,7 +51,7 @@ export default function ScannerPage() {
   const [filterDir, setFilterDir] = useState<"ALL" | "LONG" | "SHORT">("ALL");
   const [filterTf, setFilterTf] = useState("ALL");
   const [filterMarket, setFilterMarket] = useState("ALL");
-  const [minConfidence, setMinConfidence] = useState(65);
+  const [minConfidence, setMinConfidence] = useState(75);
   const [sortField, setSortField] = useState<SortField>("fired_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -97,7 +97,7 @@ export default function ScannerPage() {
     queryKey: ["signals", "live", "all"],
     queryFn: async () => {
       const res = await api.get<{ signals: Signal[] }>(
-        "/api/v1/signals/live?min_confidence=0"
+        "/api/v1/signals/live?min_confidence=75"
       );
       return res.data;
     },
@@ -220,8 +220,10 @@ export default function ScannerPage() {
     );
 
     result = [...result].sort((a, b) => {
-      let aVal: string | number = a[sortField] as string | number;
-      let bVal: string | number = b[sortField] as string | number;
+      let aVal: string | number =
+        sortField === "rr_tp1" ? a.rr_tp1 ?? -1 : (a[sortField] as string | number);
+      let bVal: string | number =
+        sortField === "rr_tp1" ? b.rr_tp1 ?? -1 : (b[sortField] as string | number);
       if (typeof aVal === "string") aVal = aVal.toLowerCase();
       if (typeof bVal === "string") bVal = bVal.toLowerCase();
       if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
@@ -446,7 +448,7 @@ export default function ScannerPage() {
               <span className="text-right">Entry</span>
               <span className="text-right">SL</span>
               <span className="text-right">TP1</span>
-              <button onClick={() => handleSort("rr_ratio")} className="flex items-center justify-end gap-1 hover:text-text-primary text-right">RR <SortIcon field="rr_ratio" /></button>
+              <button onClick={() => handleSort("rr_tp1")} className="flex items-center justify-end gap-1 hover:text-text-primary text-right">RR1 <SortIcon field="rr_tp1" /></button>
               <button onClick={() => handleSort("fired_at")} className="flex items-center justify-end gap-1 hover:text-text-primary text-right">Age <SortIcon field="fired_at" /></button>
               <span className="text-right">Details</span>
             </div>
@@ -493,7 +495,9 @@ export default function ScannerPage() {
                       <span className="text-right text-text-secondary">{formatPrice(signal.entry)}</span>
                       <span className="text-right text-short">{formatPrice(signal.stop_loss)}</span>
                       <span className="text-right text-long">{formatPrice(signal.take_profit_1)}</span>
-                      <span className="text-right text-text-secondary">{signal.rr_ratio}:1</span>
+                      <span className="text-right text-text-secondary">
+                        {signal.rr_tp1 != null ? `${signal.rr_tp1}:1` : "—"}
+                      </span>
                       <span className="text-right text-text-muted text-[10px]">{formatTimeAgo(signal.fired_at)}</span>
 
                       <div className="text-right">

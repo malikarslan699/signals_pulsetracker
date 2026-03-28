@@ -82,8 +82,34 @@ class RedisClient:
     async def get_candles(self, symbol: str, timeframe: str) -> list[dict]:
         """Return cached candle list for the given symbol/timeframe."""
         key = self._CANDLES_KEY.format(symbol=symbol, timeframe=timeframe)
-        raw_list = await self._r.lrange(key, 0, -1)
-        return [json.loads(item) for item in raw_list]
+        try:
+            raw_list = await self._r.lrange(key, 0, -1)
+            return [json.loads(item) for item in raw_list]
+        except ResponseError:
+            # Backward compatibility: older scanner code stored candles as a
+            # single JSON string instead of a Redis list.
+            raw = await self._r.get(key)
+            if not raw:
+                return []
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                await self._r.delete(key)
+                return []
+            if not isinstance(parsed, list):
+                await self._r.delete(key)
+                return []
+            cleaned: list[dict] = []
+            for candle in parsed:
+                if isinstance(candle, dict):
+                    cleaned.append(candle)
+            if cleaned:
+                await self.set_candles(symbol, timeframe, cleaned)
+            else:
+                await self._r.delete(key)
+            return cleaned
+        except Exception:
+            return []
 
     async def append_candle(
         self,
@@ -117,9 +143,11 @@ class RedisClient:
                 payload,
                 ex=86400,
             )
-        # Sorted set: score = confidence (higher = better)
+        # Sorted set: score = ranking score first, calibrated TP1 probability second.
+        rank_score = signal_data.get("ranking_score")
         confidence = signal_data.get("confidence", 0)
-        pipe.zadd(self._ACTIVE_SIGNALS_KEY, {symbol: confidence})
+        sort_score = float(rank_score if rank_score is not None else confidence)
+        pipe.zadd(self._ACTIVE_SIGNALS_KEY, {symbol: sort_score})
         pipe.expire(self._ACTIVE_SIGNALS_KEY, 86400)
         await pipe.execute()
 

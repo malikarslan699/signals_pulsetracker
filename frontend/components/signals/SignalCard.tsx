@@ -10,28 +10,45 @@ interface SignalCardProps {
 
 const STATUS_STYLE: Record<string, string> = {
   active:      "bg-blue/10 text-blue border-blue/20",
+  CREATED:     "bg-blue/10 text-blue border-blue/20",
+  ARMED:       "bg-gold/10 text-gold border-gold/20",
+  FILLED:      "bg-blue/15 text-blue border-blue/25",
   tp1_hit:     "bg-long/10 text-long border-long/20",
   tp2_hit:     "bg-long/10 text-long border-long/20",
   tp3_hit:     "bg-long/15 text-long border-long/25",
+  TP1_REACHED: "bg-long/10 text-long border-long/20",
+  TP2_REACHED: "bg-long/15 text-long border-long/25",
   sl_hit:      "bg-short/10 text-short border-short/20",
+  STOPPED:     "bg-short/10 text-short border-short/20",
   expired:     "bg-surface-2 text-text-muted border-border",
+  EXPIRED:     "bg-surface-2 text-text-muted border-border",
   invalidated: "bg-surface-2 text-text-muted border-border",
+  INVALIDATED: "bg-surface-2 text-text-muted border-border",
 };
 
 const STATUS_LABEL: Record<string, string> = {
   active:      "Active",
+  CREATED:     "Created",
+  ARMED:       "Armed",
+  FILLED:      "Filled",
   tp1_hit:     "TP1 Hit",
   tp2_hit:     "TP2 Hit",
   tp3_hit:     "TP3 Hit",
+  TP1_REACHED: "TP1 Reached",
+  TP2_REACHED: "TP2 Reached",
   sl_hit:      "SL Hit",
+  STOPPED:     "Stopped",
   expired:     "Expired",
+  EXPIRED:     "Expired",
   invalidated: "Invalidated",
+  INVALIDATED: "Invalidated",
 };
 
 export function SignalCard({ signal }: SignalCardProps) {
   const isLong = signal.direction === "LONG";
-  const bandColor = confidenceBandColor(signal.confidence);
-  const bandLabel = confidenceBandLabel(signal.confidence);
+  const probability = signal.pwin_tp1 ?? signal.confidence;
+  const bandColor = confidenceBandColor(probability);
+  const bandLabel = confidenceBandLabel(probability);
   const pnl = signal.pnl_pct != null ? parseFloat(String(signal.pnl_pct)) : null;
 
   return (
@@ -77,7 +94,7 @@ export function SignalCard({ signal }: SignalCardProps) {
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-1.5">
               <Zap className="w-3 h-3 text-text-muted" />
-              <span className="text-xs text-text-muted">Confidence</span>
+              <span className="text-xs text-text-muted">P(TP1)</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={{
@@ -87,7 +104,7 @@ export function SignalCard({ signal }: SignalCardProps) {
                 {bandLabel}
               </span>
               <span className="text-sm font-mono font-bold" style={{ color: bandColor }}>
-                {signal.confidence}
+                {probability}%
               </span>
             </div>
           </div>
@@ -96,7 +113,7 @@ export function SignalCard({ signal }: SignalCardProps) {
             <div
               className="confidence-bar-fill"
               style={{
-                width: `${signal.confidence}%`,
+                width: `${probability}%`,
                 background: `linear-gradient(90deg, ${bandColor}99, ${bandColor})`,
               }}
             />
@@ -132,9 +149,14 @@ export function SignalCard({ signal }: SignalCardProps) {
                 {pnl > 0 ? "+" : ""}{pnl.toFixed(2)}%
               </span>
             )}
-            <div className="flex items-center gap-1 text-xs font-mono font-semibold text-gold">
+            <div className="flex items-center gap-2 text-xs font-mono font-semibold">
+              {signal.setup_score != null && (
+                <span className="text-text-secondary">S{signal.setup_score}</span>
+              )}
+              <span className="flex items-center gap-1 text-gold">
               <Target className="w-3 h-3" />
-              <span>{signal.rr_ratio}:1</span>
+              <span>{signal.rr_tp1 != null ? `${signal.rr_tp1}:1` : "—"}</span>
+              </span>
             </div>
           </div>
         </div>

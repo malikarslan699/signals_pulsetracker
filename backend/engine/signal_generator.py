@@ -1,182 +1,106 @@
 """
 PulseSignal Pro — Signal Generator
 
-Converts MasterScorer output into actionable trading signals.
-Handles multi-timeframe analysis, confidence boosting from HTF alignment,
-signal deduplication, and expiry calculation.
+Phase 2 trading-engine planner.
+Builds only tradable setups through a hard gating funnel:
+HTF trend -> structure -> entry zone -> risk/targets -> signal creation.
 """
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone, timedelta
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
 
-from .scoring.scorer import MasterScorer, SignalScore
+from .calibration import PracticalCalibrator
 from .candle_utils import Candle
+from .scoring.normalizer import score_to_confidence_band
+from .scoring.scorer import MasterScorer, SignalScore
 
-
-# ---------------------------------------------------------------------------
-# GeneratedSignal — the final deliverable
-# ---------------------------------------------------------------------------
 
 @dataclass
 class GeneratedSignal:
-    """
-    A fully resolved trading signal, ready for:
-      - Database storage (all fields JSON-serialisable)
-      - Telegram / Discord alert formatting
-      - Front-end signal card rendering
-      - Webhook delivery to subscribers
-    """
+    id: str
+    symbol: str
+    market: str
+    direction: str
+    timeframe: str
 
-    # Identity
-    id: str                     # UUID4 string
-    symbol: str                 # e.g. 'BTCUSDT', 'EURUSD'
-    market: str                 # 'crypto' | 'forex' | 'stocks'
-    direction: str              # 'LONG' | 'SHORT'
-    timeframe: str              # e.g. '1H', '4H'
-
-    # Confidence
-    confidence: int             # 0-100
-    confidence_band: str        # 'ULTRA_HIGH' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NO_SIGNAL'
+    confidence: int
+    setup_score: int
+    pwin_tp1: int
+    pwin_tp2: int
+    ranking_score: float
+    confidence_band: str
     raw_score: int
     max_possible_score: int
 
-    # Trade levels
     entry: float
+    entry_zone_low: float
+    entry_zone_high: float
+    entry_type: str
     stop_loss: float
+    invalidation_price: float
     take_profit_1: float
     take_profit_2: float
     take_profit_3: float
-    rr_ratio: float             # Risk-to-reward based on TP2
+    rr_ratio: float
+    rr_tp1: float
+    rr_tp2: float
 
-    # Detailed breakdown (stored as JSON in DB)
-    score_breakdown: dict       # {indicator_name: {score, triggered, details}}
-    ict_zones: dict             # ICT overlay data for charts
-    mtf_analysis: dict          # {tf: {long_confidence, short_confidence, aligned}}
-    candle_snapshot: dict       # last 5 candles + current price
+    status: str
+    score_breakdown: dict
+    ict_zones: dict
+    mtf_analysis: dict
+    candle_snapshot: dict
+    top_confluences: list[str]
 
-    # Human-readable output
-    top_confluences: list[str]  # top 8 triggered indicators
-
-    # Timestamps
-    fired_at: str               # ISO 8601 UTC
-    expires_at: str             # ISO 8601 UTC
+    fired_at: str
+    valid_until: str
+    expires_at: str
 
     def to_dict(self) -> dict:
-        """Return a plain dict safe for JSON serialisation."""
         return asdict(self)
 
-    def is_expired(self, now: Optional[datetime] = None) -> bool:
-        """Return True if the signal has passed its expiry time."""
-        if now is None:
-            now = datetime.now(timezone.utc)
-        try:
-            exp = datetime.fromisoformat(self.expires_at)
-            # Ensure timezone-aware
-            if exp.tzinfo is None:
-                exp = exp.replace(tzinfo=timezone.utc)
-            return now >= exp
-        except (ValueError, TypeError):
-            return False
-
     def summary_line(self) -> str:
-        """One-line summary for logging / Telegram subject lines."""
-        dir_emoji = '🟢' if self.direction == 'LONG' else '🔴'
-        band_emoji = {
-            'ULTRA_HIGH': '⚡', 'HIGH': '✅', 'MEDIUM': '🔶',
-            'LOW': '⚠️', 'NO_SIGNAL': '❌',
-        }.get(self.confidence_band, '')
         return (
-            f"{dir_emoji} {self.direction} {self.symbol} {self.timeframe} "
-            f"{band_emoji} {self.confidence_band} ({self.confidence}%) "
-            f"| Entry: {self.entry:.5g} | SL: {self.stop_loss:.5g} "
-            f"| TP2: {self.take_profit_2:.5g} | RR: {self.rr_ratio:.1f}R"
+            f"{self.direction} {self.symbol} {self.timeframe} "
+            f"({self.confidence}%) entry {self.entry:.5g} "
+            f"zone {self.entry_zone_low:.5g}-{self.entry_zone_high:.5g} "
+            f"TP1 {self.take_profit_1:.5g} TP2 {self.take_profit_2:.5g}"
         )
 
 
-# ---------------------------------------------------------------------------
-# Signal Generator
-# ---------------------------------------------------------------------------
-
 class SignalGenerator:
-    """
-    Generates trading signals from OHLCV candle data.
-
-    Typical usage (single timeframe)
-    ---------------------------------
-    generator = SignalGenerator()
-    signal = generator.generate(
-        symbol='BTCUSDT',
-        market='crypto',
-        candles=candle_list,
-        timeframe='1H',
-    )
-    if signal:
-        print(signal.summary_line())
-
-    Multi-timeframe usage
-    ----------------------
-    signals = generator.generate_multi_timeframe(
-        symbol='BTCUSDT',
-        market='crypto',
-        candles_by_tf={'5m': ..., '15m': ..., '1H': ..., '4H': ..., '1D': ...},
-        primary_tf='1H',
-    )
-    """
-
-    # Minimum confidence required to emit a signal (0-100).
-    # Runtime scanner task can override this from admin config.
-    MIN_CONFIDENCE: int = 60
-
-    # Minimum gap between long and short confidence to avoid ambiguous calls
+    MIN_CONFIDENCE: int = 75
     MIN_DIRECTION_GAP: int = 12
 
-    # Timeframe reliability weights used in MTF confidence boost calculation
     TF_WEIGHTS: dict[str, float] = {
-        '1m':  0.5,
-        '3m':  0.6,
-        '5m':  0.8,
-        '15m': 1.0,
-        '30m': 1.1,
-        '1H':  1.2,
-        '2H':  1.3,
-        '4H':  1.5,
-        '8H':  1.7,
-        '1D':  2.0,
-        '1W':  2.5,
+        "15m": 1.0,
+        "1H": 1.25,
+        "4H": 1.5,
+        "1D": 2.0,
     }
 
-    # How long a signal is valid after firing, per timeframe
     TF_EXPIRY_HOURS: dict[str, int] = {
-        '1m':  0,    # 30 minutes → set as fraction below
-        '3m':  1,
-        '5m':  1,
-        '15m': 4,
-        '30m': 8,
-        '1H':  24,
-        '2H':  48,
-        '4H':  96,
-        '8H':  192,
-        '1D':  240,
-        '1W':  720,
+        "15m": 6,
+        "1H": 24,
+        "4H": 96,
+        "1D": 240,
     }
 
-    # Fractional expiry for very short timeframes (minutes)
-    TF_EXPIRY_MINUTES: dict[str, int] = {
-        '1m':  30,
-        '3m':  60,
+    TF_VALID_HOURS: dict[str, int] = {
+        "15m": 2,
+        "1H": 8,
+        "4H": 30,
+        "1D": 72,
     }
 
     def __init__(self) -> None:
         self.scorer = MasterScorer()
-
-    # -----------------------------------------------------------------------
-    # Primary public method — single timeframe
-    # -----------------------------------------------------------------------
+        self.calibrator = PracticalCalibrator()
 
     def generate(
         self,
@@ -186,264 +110,124 @@ class SignalGenerator:
         timeframe: str,
         candles_by_tf: Optional[dict[str, list[Candle]]] = None,
     ) -> Optional[GeneratedSignal]:
-        """
-        Analyse ``candles`` on ``timeframe`` and return a signal if the
-        confidence threshold is met.
-
-        Parameters
-        ----------
-        symbol : str
-            Instrument ticker, e.g. ``'BTCUSDT'`` or ``'EURUSD'``.
-        market : str
-            Market category — ``'crypto'``, ``'forex'``, or ``'stocks'``.
-        candles : list[Candle]
-            Primary timeframe OHLCV history, **ascending** order.
-            Minimum 50 candles required.
-        timeframe : str
-            Candle interval key, e.g. ``'1H'``, ``'4H'``, ``'1D'``.
-        candles_by_tf : dict[str, list[Candle]], optional
-            Candles for other timeframes to run MTF confluence analysis.
-            Keys must be timeframe strings; each list needs ≥ 50 candles.
-
-        Returns
-        -------
-        GeneratedSignal or None
-            A fully populated signal if confidence ≥ MIN_CONFIDENCE and
-            there is a clear directional edge, else ``None``.
-        """
         if len(candles) < 50:
             return None
 
-        # ── Convert candle list to numpy arrays ────────────────────────────
-        opens      = np.array([c['open']      for c in candles], dtype=np.float64)
-        highs      = np.array([c['high']      for c in candles], dtype=np.float64)
-        lows       = np.array([c['low']       for c in candles], dtype=np.float64)
-        closes     = np.array([c['close']     for c in candles], dtype=np.float64)
-        volumes    = np.array([c['volume']    for c in candles], dtype=np.float64)
-        timestamps = np.array([c['timestamp'] for c in candles], dtype=np.float64)
+        opens = np.array([c["open"] for c in candles], dtype=np.float64)
+        highs = np.array([c["high"] for c in candles], dtype=np.float64)
+        lows = np.array([c["low"] for c in candles], dtype=np.float64)
+        closes = np.array([c["close"] for c in candles], dtype=np.float64)
+        volumes = np.array([c["volume"] for c in candles], dtype=np.float64)
+        timestamps = np.array([c["timestamp"] for c in candles], dtype=np.float64)
 
-        # ── Score primary timeframe ────────────────────────────────────────
         try:
             long_score, short_score = self.scorer.score(
-                opens, highs, lows, closes, volumes, timestamps,
-                timeframe, symbol,
+                opens, highs, lows, closes, volumes, timestamps, timeframe, symbol
             )
         except Exception:
             return None
 
-        long_c = long_score.confidence
-        short_c = short_score.confidence
-
-        # ── Directional clarity check ──────────────────────────────────────
-        # Both directions must be below the threshold, OR the gap must be
-        # meaningful enough to indicate a genuine edge.
-        best_conf = max(long_c, short_c)
-        if best_conf < self.MIN_CONFIDENCE:
+        winner = self._select_candidate(long_score, short_score)
+        if winner is None:
             return None
 
-        if abs(long_c - short_c) < self.MIN_DIRECTION_GAP:
+        htf_context, exported_mtf = self._build_htf_context(symbol, timeframe, candles_by_tf or {})
+        for tf, data in exported_mtf.items():
+            data["aligned"] = data.get("direction") == winner.direction
+        if not self._passes_htf_gate(timeframe, winner.direction, htf_context):
             return None
 
-        winner: SignalScore = long_score if long_c >= short_c else short_score
+        if not self._passes_structure_gate(winner):
+            return None
 
-        # ── Multi-timeframe analysis ───────────────────────────────────────
-        mtf_analysis: dict[str, dict] = {}
-        if candles_by_tf:
-            for tf, tf_candles in candles_by_tf.items():
-                if tf == timeframe or len(tf_candles) < 50:
-                    continue
-                try:
-                    tf_opens      = np.array([c['open']      for c in tf_candles], dtype=np.float64)
-                    tf_highs      = np.array([c['high']      for c in tf_candles], dtype=np.float64)
-                    tf_lows       = np.array([c['low']       for c in tf_candles], dtype=np.float64)
-                    tf_closes     = np.array([c['close']     for c in tf_candles], dtype=np.float64)
-                    tf_volumes    = np.array([c['volume']    for c in tf_candles], dtype=np.float64)
-                    tf_timestamps = np.array([c['timestamp'] for c in tf_candles], dtype=np.float64)
+        entry_plan = self._build_entry_plan(winner, closes, timeframe)
+        if entry_plan is None:
+            return None
 
-                    tf_long, tf_short = self.scorer.score(
-                        tf_opens, tf_highs, tf_lows, tf_closes,
-                        tf_volumes, tf_timestamps, tf, symbol,
-                    )
-                    tf_aligned = (
-                        (winner.direction == 'LONG'  and tf_long.confidence  > tf_short.confidence) or
-                        (winner.direction == 'SHORT' and tf_short.confidence > tf_long.confidence)
-                    )
-                    mtf_analysis[tf] = {
-                        'long_confidence':  tf_long.confidence,
-                        'short_confidence': tf_short.confidence,
-                        'direction': 'LONG' if tf_long.confidence > tf_short.confidence else 'SHORT',
-                        'aligned': tf_aligned,
-                        'weight': self.TF_WEIGHTS.get(tf, 1.0),
-                    }
-                except Exception:
-                    pass
-
-        # ── MTF confidence boost ───────────────────────────────────────────
-        # Each aligned higher-timeframe (weight ≥ 1.2) adds a small bonus.
-        aligned_htf_count = sum(
-            1 for tf, data in mtf_analysis.items()
-            if data.get('aligned') and self.TF_WEIGHTS.get(tf, 1.0) >= 1.2
+        risk_plan = self._build_risk_plan(
+            direction=winner.direction,
+            entry_plan=entry_plan,
+            closes=closes,
+            highs=highs,
+            lows=lows,
+            primary_zones=winner.ict_zones,
+            htf_context=htf_context,
         )
-        aligned_ltf_count = sum(
-            1 for tf, data in mtf_analysis.items()
-            if data.get('aligned') and self.TF_WEIGHTS.get(tf, 1.0) < 1.2
+        if risk_plan is None:
+            return None
+
+        rr_tp1 = self._calc_rr(risk_plan["entry"], risk_plan["stop_loss"], risk_plan["take_profit_1"])
+        rr_tp2 = self._calc_rr(risk_plan["entry"], risk_plan["stop_loss"], risk_plan["take_profit_2"])
+        if rr_tp1 is None or rr_tp2 is None or rr_tp1 < 1.3 or rr_tp2 < 2.0:
+            return None
+
+        setup_score = self._compute_clean_confidence(winner, htf_context, entry_plan["entry_type"])
+        calibrated = self._calibrate_signal(
+            winner=winner,
+            setup_score=setup_score,
+            rr_tp1=rr_tp1,
+            rr_tp2=rr_tp2,
+            entry_type=entry_plan["entry_type"],
+            htf_context=htf_context,
         )
-
-        if aligned_htf_count >= 3:
-            boost = 8
-        elif aligned_htf_count == 2:
-            boost = 5
-        elif aligned_htf_count == 1:
-            boost = 2
-        else:
-            boost = 0
-
-        # Minor additional boost if LTFs also agree
-        if aligned_ltf_count >= 2:
-            boost += 2
-        elif aligned_ltf_count == 1:
-            boost += 1
-
-        final_confidence = min(100, winner.confidence + boost)
-
-        # Re-check threshold after boost
-        if final_confidence < self.MIN_CONFIDENCE:
+        confidence = calibrated.pwin_tp1
+        if confidence < max(75, self.MIN_CONFIDENCE):
             return None
 
-        # ── Multi-timeframe confirmation gate ─────────────────────────
-        # For lower timeframes, require higher-TF alignment to confirm the
-        # trend bias before accepting the signal.  If the required HTF is
-        # present in mtf_analysis but NOT aligned, the signal is rejected.
-        #
-        #   5m  signal → 15m must be aligned
-        #   15m signal → 1H  must be aligned
-        #   1H  signal → 4H  must be aligned
-        #   4H+ signal → no mandatory gate (already a higher-TF decision)
-        MTF_GATES: dict[str, str] = {
-            # Keep strict confirmation on the noisiest TF only.
-            '5m': '15m',
-        }
-        required_tf = MTF_GATES.get(timeframe)
-        if required_tf and required_tf in mtf_analysis:
-            if not mtf_analysis[required_tf].get('aligned'):
-                return None  # HTF disagrees — do not fire
-
-        # ── Low-volatility gate ────────────────────────────────────────────
-        # Avoid signals in dead/flat zones — choppy price action kills RR.
-        try:
-            from .indicators.volatility import atr_analysis as _atr_fn
-            _atr_info = _atr_fn(highs, lows, closes, float(closes[-1]), winner.direction)
-            _atr_pct = _atr_info.get('atr_pct', 0.0)
-            if isinstance(_atr_pct, float) and _atr_pct < 0.25:
-                return None  # ATR < 0.25% of price — too flat/choppy
-        except Exception:
-            pass
-
-        # ── Minimum R:R gate ──────────────────────────────────────────────
-        # Only fire if TP distance is at least 1.5× the SL distance.
-        if winner.rr_ratio < 1.5:
-            return None
-
-        # ── Trend alignment gate ──────────────────────────────────────────
-        # Require at least one trend indicator OR two ICT/structure confirms
-        # aligned with signal direction. Blocks pure counter-trend signals.
-        trend_hits = sum(1 for s in winner.trend_scores if s.triggered and s.score > 0)
-        ict_hits = sum(1 for s in winner.ict_scores if s.triggered and s.score > 0)
-        struct_hits = sum(1 for s in winner.structure_scores if s.triggered and s.score > 0)
-        if trend_hits == 0 and (ict_hits + struct_hits) < 1:
-            return None  # No trend and no ICT/structure support — reject
-
-        # ── Candle snapshot (last 5 candles) ──────────────────────────────
-        snapshot_candles = candles[-5:]
-        candle_snapshot = {
-            'candles': [
-                {
-                    'timestamp': c['timestamp'],
-                    'open':   c['open'],
-                    'high':   c['high'],
-                    'low':    c['low'],
-                    'close':  c['close'],
-                    'volume': c['volume'],
-                }
-                for c in snapshot_candles
-            ],
-            'current_price': float(closes[-1]),
-            'timeframe': timeframe,
-        }
-
-        # ── Expiry timestamp ──────────────────────────────────────────────
         now = datetime.now(timezone.utc)
+        valid_until = now + timedelta(hours=self.TF_VALID_HOURS.get(timeframe, 8))
+        expires_at = now + timedelta(hours=self.TF_EXPIRY_HOURS.get(timeframe, 24))
+        current_price = float(closes[-1])
+        status = self._initial_status(current_price, entry_plan["zone_low"], entry_plan["zone_high"])
 
-        if timeframe in self.TF_EXPIRY_MINUTES:
-            expires_at = now + timedelta(minutes=self.TF_EXPIRY_MINUTES[timeframe])
-        else:
-            expiry_hours = self.TF_EXPIRY_HOURS.get(timeframe, 24)
-            expires_at = now + timedelta(hours=expiry_hours)
+        top_confluences = self._top_real_confluences(winner)
+        snapshot = self._build_snapshot(candles, timeframe)
 
-        # ── Assemble and return ───────────────────────────────────────────
         return GeneratedSignal(
             id=str(uuid.uuid4()),
             symbol=symbol,
             market=market,
             direction=winner.direction,
             timeframe=timeframe,
-            confidence=final_confidence,
-            confidence_band=winner.confidence_band,
-            entry=winner.entry,
-            stop_loss=winner.stop_loss,
-            take_profit_1=winner.take_profit_1,
-            take_profit_2=winner.take_profit_2,
-            take_profit_3=winner.take_profit_3,
-            rr_ratio=winner.rr_ratio,
-            raw_score=winner.raw_score,
-            max_possible_score=winner.max_possible,
+            confidence=confidence,
+            setup_score=calibrated.setup_score,
+            pwin_tp1=calibrated.pwin_tp1,
+            pwin_tp2=calibrated.pwin_tp2,
+            ranking_score=calibrated.ranking_score,
+            confidence_band=score_to_confidence_band(confidence),
+            raw_score=calibrated.setup_score,
+            max_possible_score=100,
+            entry=round(risk_plan["entry"], 8),
+            entry_zone_low=round(entry_plan["zone_low"], 8),
+            entry_zone_high=round(entry_plan["zone_high"], 8),
+            entry_type=entry_plan["entry_type"],
+            stop_loss=round(risk_plan["stop_loss"], 8),
+            invalidation_price=round(risk_plan["invalidation_price"], 8),
+            take_profit_1=round(risk_plan["take_profit_1"], 8),
+            take_profit_2=round(risk_plan["take_profit_2"], 8),
+            take_profit_3=round(risk_plan["take_profit_3"], 8),
+            rr_ratio=round(rr_tp2, 2),
+            rr_tp1=round(rr_tp1, 2),
+            rr_tp2=round(rr_tp2, 2),
+            status=status,
             score_breakdown=winner.to_breakdown_dict(),
             ict_zones=winner.ict_zones,
-            mtf_analysis=mtf_analysis,
-            candle_snapshot=candle_snapshot,
-            top_confluences=winner.top_confluences,
+            mtf_analysis=exported_mtf,
+            candle_snapshot=snapshot,
+            top_confluences=top_confluences,
             fired_at=now.isoformat(),
+            valid_until=valid_until.isoformat(),
             expires_at=expires_at.isoformat(),
         )
-
-    # -----------------------------------------------------------------------
-    # Multi-timeframe sweep
-    # -----------------------------------------------------------------------
 
     def generate_multi_timeframe(
         self,
         symbol: str,
         market: str,
         candles_by_tf: dict[str, list[Candle]],
-        primary_tf: str = '1H',
+        primary_tf: str = "1H",
     ) -> list[GeneratedSignal]:
-        """
-        Run analysis across every provided timeframe and return all signals
-        that meet the confidence threshold.
-
-        For each timeframe, all *other* timeframes are passed as MTF context.
-        Duplicate directions are deduplicated: if LONG signals fire on
-        multiple timeframes, only the highest-confidence one is kept.
-
-        Parameters
-        ----------
-        symbol : str
-            Instrument ticker.
-        market : str
-            Market category.
-        candles_by_tf : dict[str, list[Candle]]
-            Dict mapping timeframe strings to candle lists.
-        primary_tf : str
-            The most important timeframe — currently used only for ordering.
-
-        Returns
-        -------
-        list[GeneratedSignal]
-            0, 1, or 2 signals (at most one LONG and one SHORT), sorted by
-            timeframe weight descending.
-        """
         raw_signals: list[GeneratedSignal] = []
-
         for tf, candles in candles_by_tf.items():
             context = {k: v for k, v in candles_by_tf.items() if k != tf}
             signal = self.generate(
@@ -451,7 +235,7 @@ class SignalGenerator:
                 market=market,
                 candles=candles,
                 timeframe=tf,
-                candles_by_tf=context if context else None,
+                candles_by_tf=context,
             )
             if signal:
                 raw_signals.append(signal)
@@ -459,27 +243,24 @@ class SignalGenerator:
         if not raw_signals:
             return []
 
-        # ── Deduplication: keep highest-confidence signal per direction ────
         best_by_direction: dict[str, GeneratedSignal] = {}
-        for sig in sorted(raw_signals, key=lambda s: s.confidence, reverse=True):
+        for sig in sorted(
+            raw_signals,
+            key=lambda s: (s.ranking_score, s.pwin_tp1, s.setup_score),
+            reverse=True,
+        ):
             if sig.direction not in best_by_direction:
                 best_by_direction[sig.direction] = sig
 
         deduped = list(best_by_direction.values())
-
-        # ── Sort: heavier timeframes first, then by confidence ────────────
         deduped.sort(
             key=lambda s: (
+                -float(s.ranking_score),
                 -self.TF_WEIGHTS.get(s.timeframe, 1.0),
-                -s.confidence,
+                -s.pwin_tp1,
             )
         )
-
         return deduped
-
-    # -----------------------------------------------------------------------
-    # Convenience helpers
-    # -----------------------------------------------------------------------
 
     def get_best_signal(
         self,
@@ -487,43 +268,21 @@ class SignalGenerator:
         market: str,
         candles_by_tf: dict[str, list[Candle]],
     ) -> Optional[GeneratedSignal]:
-        """
-        Run MTF analysis and return the single highest-confidence signal,
-        regardless of direction.  Returns ``None`` if no signal qualifies.
-        """
         signals = self.generate_multi_timeframe(symbol, market, candles_by_tf)
         if not signals:
             return None
-        return max(signals, key=lambda s: s.confidence)
+        return max(signals, key=lambda s: (s.ranking_score, s.pwin_tp1, s.setup_score))
 
-    def batch_generate(
-        self,
-        requests: list[dict],
-    ) -> list[Optional[GeneratedSignal]]:
-        """
-        Process multiple generate() requests in sequence.
-
-        Parameters
-        ----------
-        requests : list[dict]
-            Each dict must contain the keyword arguments accepted by
-            :meth:`generate`: ``symbol``, ``market``, ``candles``,
-            ``timeframe``, and optionally ``candles_by_tf``.
-
-        Returns
-        -------
-        list[Optional[GeneratedSignal]]
-            One entry per request (``None`` where no signal was produced).
-        """
+    def batch_generate(self, requests: list[dict]) -> list[Optional[GeneratedSignal]]:
         results: list[Optional[GeneratedSignal]] = []
         for req in requests:
             try:
                 sig = self.generate(
-                    symbol=req['symbol'],
-                    market=req['market'],
-                    candles=req['candles'],
-                    timeframe=req['timeframe'],
-                    candles_by_tf=req.get('candles_by_tf'),
+                    symbol=req["symbol"],
+                    market=req["market"],
+                    candles=req["candles"],
+                    timeframe=req["timeframe"],
+                    candles_by_tf=req.get("candles_by_tf"),
                 )
             except Exception:
                 sig = None
@@ -531,76 +290,432 @@ class SignalGenerator:
         return results
 
     @staticmethod
-    def filter_by_band(
-        signals: list[GeneratedSignal],
-        min_band: str = 'MEDIUM',
-    ) -> list[GeneratedSignal]:
-        """
-        Filter a list of signals by minimum confidence band.
-
-        Band order (ascending): NO_SIGNAL < LOW < MEDIUM < HIGH < ULTRA_HIGH.
-        """
-        band_rank: dict[str, int] = {
-            'NO_SIGNAL': 0,
-            'LOW':       1,
-            'MEDIUM':    2,
-            'HIGH':      3,
-            'ULTRA_HIGH': 4,
-        }
+    def filter_by_band(signals: list[GeneratedSignal], min_band: str = "MEDIUM") -> list[GeneratedSignal]:
+        band_rank = {"NO_SIGNAL": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "ULTRA_HIGH": 4}
         min_rank = band_rank.get(min_band, 0)
-        return [
-            s for s in signals
-            if band_rank.get(s.confidence_band, 0) >= min_rank
-        ]
+        return [s for s in signals if band_rank.get(s.confidence_band, 0) >= min_rank]
 
     @staticmethod
     def format_telegram_message(signal: GeneratedSignal) -> str:
-        """
-        Render a Telegram-ready message string for the given signal.
-
-        Uses Markdown V2 compatible formatting (no parse_mode escaping
-        applied here — callers must handle that if needed).
-        """
-        dir_emoji = '🟢' if signal.direction == 'LONG' else '🔴'
-        band_emoji = {
-            'ULTRA_HIGH': '⚡',
-            'HIGH':       '✅',
-            'MEDIUM':     '🔶',
-            'LOW':        '⚠️',
-            'NO_SIGNAL':  '❌',
-        }.get(signal.confidence_band, '')
-
         lines = [
-            f"{dir_emoji} *{signal.symbol}* — {signal.direction} Signal",
-            f"📊 Timeframe: `{signal.timeframe}` | Market: `{signal.market.upper()}`",
-            f"{band_emoji} Confidence: *{signal.confidence}%* ({signal.confidence_band})",
-            "",
-            "📐 *Trade Levels*",
-            f"  Entry:  `{signal.entry:.5g}`",
-            f"  Stop:   `{signal.stop_loss:.5g}`",
-            f"  TP1:    `{signal.take_profit_1:.5g}`",
-            f"  TP2:    `{signal.take_profit_2:.5g}`",
-            f"  TP3:    `{signal.take_profit_3:.5g}`",
-            f"  R/R:    `{signal.rr_ratio:.1f}R`",
-            "",
-            "🔑 *Top Confluences*",
+            f"{'🟢' if signal.direction == 'LONG' else '🔴'} *{signal.symbol}* — {signal.direction}",
+            f"📊 TF: `{signal.timeframe}` | P(TP1): *{signal.pwin_tp1}%* | P(TP2): *{signal.pwin_tp2}%*",
+            f"🧠 Setup Score: *{signal.setup_score}/100* | Rank: *{signal.ranking_score:.1f}*",
+            f"🎯 Entry Zone: `{signal.entry_zone_low:.5g}` - `{signal.entry_zone_high:.5g}` ({signal.entry_type})",
+            f"🧭 Planned Entry: `{signal.entry:.5g}`",
+            f"⛔ Invalidates: `{signal.invalidation_price:.5g}` | Stop: `{signal.stop_loss:.5g}`",
+            f"✅ TP1: `{signal.take_profit_1:.5g}` | RR1: `1:{signal.rr_tp1:.2f}`",
+            f"🚀 TP2: `{signal.take_profit_2:.5g}` | RR2: `1:{signal.rr_tp2:.2f}`",
+            f"⏳ Valid Until: `{signal.valid_until[:19]} UTC`",
+            f"⌛ Expires: `{signal.expires_at[:19]} UTC`",
         ]
-        for c in signal.top_confluences[:6]:
-            lines.append(f"  • {c}")
-
-        # MTF alignment summary
-        aligned_tfs = [
-            tf for tf, data in signal.mtf_analysis.items()
-            if data.get('aligned')
-        ]
-        if aligned_tfs:
+        if signal.top_confluences:
             lines.append("")
-            lines.append(f"📡 HTF Aligned: {', '.join(sorted(aligned_tfs))}")
-
-        lines.append("")
-        lines.append(f"🕐 Fired: `{signal.fired_at[:19]} UTC`")
-        lines.append(f"⏳ Expires: `{signal.expires_at[:19]} UTC`")
-        lines.append("")
-        lines.append("_PulseSignal Pro — signals.pulsetracker.net_")
-
+            lines.append("🔑 Confluences:")
+            for item in signal.top_confluences[:6]:
+                lines.append(f"  • {item}")
         return "\n".join(lines)
+
+    def _select_candidate(self, long_score: SignalScore, short_score: SignalScore) -> Optional[SignalScore]:
+        long_c = int(long_score.confidence or 0)
+        short_c = int(short_score.confidence or 0)
+        best = max(long_c, short_c)
+        if best < max(60, self.MIN_CONFIDENCE - 10):
+            return None
+        if abs(long_c - short_c) < self.MIN_DIRECTION_GAP:
+            return None
+        return long_score if long_c > short_c else short_score
+
+    def _build_htf_context(
+        self,
+        symbol: str,
+        timeframe: str,
+        candles_by_tf: dict[str, list[Candle]],
+    ) -> tuple[dict[str, dict], dict[str, dict]]:
+        internal: dict[str, dict] = {}
+        exported: dict[str, dict] = {}
+        for tf in ("1H", "4H"):
+            tf_candles = candles_by_tf.get(tf)
+            if tf == timeframe or not tf_candles or len(tf_candles) < 50:
+                continue
+            try:
+                opens = np.array([c["open"] for c in tf_candles], dtype=np.float64)
+                highs = np.array([c["high"] for c in tf_candles], dtype=np.float64)
+                lows = np.array([c["low"] for c in tf_candles], dtype=np.float64)
+                closes = np.array([c["close"] for c in tf_candles], dtype=np.float64)
+                volumes = np.array([c["volume"] for c in tf_candles], dtype=np.float64)
+                timestamps = np.array([c["timestamp"] for c in tf_candles], dtype=np.float64)
+                long_score, short_score = self.scorer.score(opens, highs, lows, closes, volumes, timestamps, tf, symbol)
+                direction = "LONG" if long_score.confidence >= short_score.confidence else "SHORT"
+                gap = abs(int(long_score.confidence or 0) - int(short_score.confidence or 0))
+                score_obj = long_score if direction == "LONG" else short_score
+                internal[tf] = {
+                    "direction": direction,
+                    "gap": gap,
+                    "confidence": int(score_obj.confidence or 0),
+                    "score": score_obj,
+                }
+                exported[tf] = {
+                    "long_confidence": int(long_score.confidence or 0),
+                    "short_confidence": int(short_score.confidence or 0),
+                    "direction": direction,
+                    "aligned": False,
+                    "weight": self.TF_WEIGHTS.get(tf, 1.0),
+                }
+            except Exception:
+                continue
+        return internal, exported
+
+    def _passes_htf_gate(self, timeframe: str, direction: str, htf_context: dict[str, dict]) -> bool:
+        one_h = htf_context.get("1H")
+        four_h = htf_context.get("4H")
+
+        if timeframe == "15m":
+            if not one_h or one_h["direction"] != direction:
+                return False
+            if not four_h or four_h["direction"] != direction:
+                return False
+            return True
+
+        if timeframe == "1H":
+            if four_h and four_h["direction"] != direction and four_h["gap"] >= 8:
+                return False
+            return True
+
+        if timeframe == "4H":
+            return True
+
+        return True
+
+    def _passes_structure_gate(self, winner: SignalScore) -> bool:
+        structure_hits = [s for s in winner.structure_scores if s.triggered and s.score > 0]
+        trend_hits = [s for s in winner.trend_scores if s.triggered and s.score > 0]
+        entry_hits = [
+            s for s in winner.ict_scores
+            if s.triggered and s.score > 0 and s.name in {
+                "ICT Order Block",
+                "ICT Fair Value Gap",
+                "ICT OTE Zone",
+                "ICT Breaker Block",
+                "ICT Premium/Discount",
+            }
+        ]
+        return bool(trend_hits) and bool(structure_hits) and bool(entry_hits)
+
+    def _build_entry_plan(self, winner: SignalScore, closes: np.ndarray, timeframe: str) -> Optional[dict]:
+        direction_key = "bullish" if winner.direction == "LONG" else "bearish"
+        zones: list[dict] = []
+        current_price = float(closes[-1])
+
+        ob_group = (winner.ict_zones.get("order_blocks") or {}).get(direction_key, [])
+        for item in ob_group[:5]:
+            low = float(min(item.get("low", 0), item.get("high", 0)))
+            high = float(max(item.get("low", 0), item.get("high", 0)))
+            if low > 0 and high > low:
+                zones.append({"zone_low": low, "zone_high": high, "entry_type": "ORDER_BLOCK", "priority": 1})
+
+        fvg_group = (winner.ict_zones.get("fvg") or {}).get(direction_key, [])
+        for item in fvg_group[:5]:
+            low = float(min(item.get("bottom", 0), item.get("top", 0)))
+            high = float(max(item.get("bottom", 0), item.get("top", 0)))
+            if low > 0 and high > low:
+                zones.append({"zone_low": low, "zone_high": high, "entry_type": "FVG_RETEST", "priority": 2})
+
+        ote = winner.ict_zones.get("ote") or {}
+        if ote.get("active") and ote.get("direction") == direction_key:
+            low = float(min(ote.get("low", 0) or 0, ote.get("high", 0) or 0))
+            high = float(max(ote.get("low", 0) or 0, ote.get("high", 0) or 0))
+            if low > 0 and high > low:
+                zones.append({"zone_low": low, "zone_high": high, "entry_type": "OTE_RETRACE", "priority": 0})
+
+        if not zones:
+            return None
+
+        def zone_rank(item: dict) -> tuple[float, int, float]:
+            low = item["zone_low"]
+            high = item["zone_high"]
+            inside = 0 if low <= current_price <= high else 1
+            distance = abs(((low + high) / 2.0) - current_price)
+            return (inside, int(item["priority"]), distance)
+
+        zone = sorted(zones, key=zone_rank)[0]
+        zone_low = float(zone["zone_low"])
+        zone_high = float(zone["zone_high"])
+        width = max(zone_high - zone_low, current_price * 0.0008)
+        if width <= 0:
+            return None
+
+        if winner.direction == "LONG":
+            entry = zone_low + width * 0.55
+        else:
+            entry = zone_high - width * 0.55
+
+        return {
+            "zone_low": zone_low,
+            "zone_high": zone_high,
+            "entry": entry,
+            "entry_type": zone["entry_type"],
+            "zone_width": width,
+        }
+
+    def _build_risk_plan(
+        self,
+        direction: str,
+        entry_plan: dict,
+        closes: np.ndarray,
+        highs: np.ndarray,
+        lows: np.ndarray,
+        primary_zones: dict,
+        htf_context: dict[str, dict],
+    ) -> Optional[dict]:
+        entry = float(entry_plan["entry"])
+        atr_info = self.scorer._atr_analysis(highs, lows, closes, entry, direction)
+        atr_val = float(atr_info.get("atr") or 0.0)
+        if atr_val <= 0:
+            return None
+
+        buffer = max(atr_val * 0.35, entry * 0.0015)
+        if direction == "LONG":
+            invalidation = float(entry_plan["zone_low"])
+            stop_loss = invalidation - buffer
+        else:
+            invalidation = float(entry_plan["zone_high"])
+            stop_loss = invalidation + buffer
+
+        if abs(entry - stop_loss) <= 0:
+            return None
+
+        tp1 = self._nearest_liquidity_target(direction, entry, primary_zones, htf_context, higher_timeframe=False)
+        tp2 = self._nearest_liquidity_target(direction, entry, primary_zones, htf_context, higher_timeframe=True)
+
+        risk = abs(entry - stop_loss)
+        if tp1 is None:
+            tp1 = entry + (risk * 2.2 if direction == "LONG" else -risk * 2.2)
+        if tp2 is None:
+            tp2 = entry + (risk * 3.6 if direction == "LONG" else -risk * 3.6)
+
+        if direction == "LONG":
+            if tp1 <= entry:
+                tp1 = entry + risk * 2.0
+            if tp2 <= tp1:
+                tp2 = tp1 + risk * 1.2
+            tp3 = tp2 + risk * 1.0
+        else:
+            if tp1 >= entry:
+                tp1 = entry - risk * 2.0
+            if tp2 >= tp1:
+                tp2 = tp1 - risk * 1.2
+            tp3 = tp2 - risk * 1.0
+
+        return {
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "invalidation_price": invalidation,
+            "take_profit_1": tp1,
+            "take_profit_2": tp2,
+            "take_profit_3": tp3,
+        }
+
+    def _nearest_liquidity_target(
+        self,
+        direction: str,
+        entry: float,
+        primary_zones: dict,
+        htf_context: dict[str, dict],
+        higher_timeframe: bool,
+    ) -> Optional[float]:
+        sources: list[dict] = []
+        if not higher_timeframe:
+            sources.append(primary_zones)
+        else:
+            if "4H" in htf_context:
+                sources.append(htf_context["4H"]["score"].ict_zones)
+            sources.append(primary_zones)
+
+        levels: list[float] = []
+        for source in sources:
+            liq = source.get("liquidity") or {}
+            if direction == "LONG":
+                for key in ("bsl",):
+                    for value in liq.get(key, []) or []:
+                        try:
+                            price = float(value)
+                        except Exception:
+                            continue
+                        if price > entry:
+                            levels.append(price)
+                for item in liq.get("equal_highs", []) or []:
+                    try:
+                        price = float(item.get("price", 0) or 0)
+                    except Exception:
+                        continue
+                    if price > entry:
+                        levels.append(price)
+                for key in ("pdh",):
+                    try:
+                        price = float(liq.get(key, 0) or 0)
+                    except Exception:
+                        continue
+                    if price > entry:
+                        levels.append(price)
+            else:
+                for key in ("ssl",):
+                    for value in liq.get(key, []) or []:
+                        try:
+                            price = float(value)
+                        except Exception:
+                            continue
+                        if 0 < price < entry:
+                            levels.append(price)
+                for item in liq.get("equal_lows", []) or []:
+                    try:
+                        price = float(item.get("price", 0) or 0)
+                    except Exception:
+                        continue
+                    if 0 < price < entry:
+                        levels.append(price)
+                for key in ("pdl",):
+                    try:
+                        price = float(liq.get(key, 0) or 0)
+                    except Exception:
+                        continue
+                    if 0 < price < entry:
+                        levels.append(price)
+
+        if not levels:
+            return None
+        levels = sorted(set(round(v, 8) for v in levels))
+        return levels[-1] if higher_timeframe and direction == "LONG" else (
+            levels[0] if not higher_timeframe and direction == "LONG" else (
+                levels[0] if higher_timeframe and direction == "SHORT" else levels[-1]
+            )
+        )
+
+    def _compute_clean_confidence(self, winner: SignalScore, htf_context: dict[str, dict], entry_type: str) -> int:
+        def capped_sum(items: list, cap: int) -> int:
+            total = sum(int(s.score) for s in items if s.triggered and int(s.score) > 0)
+            return min(cap, total)
+
+        score = 0
+        score += capped_sum(winner.trend_scores, 24)
+        score += capped_sum(winner.structure_scores, 22)
+        score += capped_sum(winner.ict_scores, 28)
+        score += capped_sum(winner.momentum_scores, 8)
+        score += capped_sum(winner.volume_scores, 8)
+        score += capped_sum(winner.volatility_scores, 6)
+        score += min(4, capped_sum(winner.fibonacci_scores, 4))
+
+        if entry_type == "OTE_RETRACE":
+            score += 4
+        elif entry_type == "ORDER_BLOCK":
+            score += 3
+        elif entry_type == "FVG_RETEST":
+            score += 2
+
+        one_h = htf_context.get("1H")
+        four_h = htf_context.get("4H")
+        if one_h and one_h["direction"] == winner.direction:
+            score += 8
+        if four_h and four_h["direction"] == winner.direction:
+            score += 10
+        if four_h and four_h["direction"] != winner.direction and four_h["gap"] >= 8:
+            score -= 12
+
+        return max(0, min(100, int(round(score))))
+
+    def _calibrate_signal(
+        self,
+        winner: SignalScore,
+        setup_score: int,
+        rr_tp1: float,
+        rr_tp2: float,
+        entry_type: str,
+        htf_context: dict[str, dict],
+    ):
+        structure_hits = len([s for s in winner.structure_scores if s.triggered and s.score > 0])
+        entry_hits = len(
+            [
+                s
+                for s in winner.ict_scores
+                if s.triggered and s.score > 0 and s.name in {
+                    "ICT Order Block",
+                    "ICT Fair Value Gap",
+                    "ICT OTE Zone",
+                    "ICT Breaker Block",
+                    "ICT Premium/Discount",
+                }
+            ]
+        )
+        trend_hits = len([s for s in winner.trend_scores if s.triggered and s.score > 0])
+        htf_alignment_count = sum(
+            1
+            for tf in ("1H", "4H")
+            if htf_context.get(tf) and htf_context[tf]["direction"] == winner.direction
+        )
+        htf_conflict = any(
+            htf_context.get(tf)
+            and htf_context[tf]["direction"] != winner.direction
+            and htf_context[tf]["gap"] >= 8
+            for tf in ("1H", "4H")
+        )
+        return self.calibrator.calibrate(
+            setup_score=setup_score,
+            rr_tp1=float(rr_tp1),
+            rr_tp2=float(rr_tp2),
+            entry_type=entry_type,
+            htf_alignment_count=htf_alignment_count,
+            htf_conflict=htf_conflict,
+            structure_hits=structure_hits,
+            entry_hits=entry_hits,
+            trend_hits=trend_hits,
+        )
+
+    def _top_real_confluences(self, winner: SignalScore) -> list[str]:
+        items = (
+            winner.ict_scores
+            + winner.structure_scores
+            + winner.trend_scores
+            + winner.momentum_scores
+            + winner.volume_scores
+            + winner.volatility_scores
+            + winner.fibonacci_scores
+        )
+        triggered = [s for s in items if s.triggered and s.score > 0]
+        triggered.sort(key=lambda item: int(item.score), reverse=True)
+        return [f"{s.name}: {s.details}" if s.details else s.name for s in triggered[:8]]
+
+    def _build_snapshot(self, candles: list[Candle], timeframe: str) -> dict:
+        tail = candles[-5:]
+        return {
+            "candles": [
+                {
+                    "timestamp": c["timestamp"],
+                    "open": c["open"],
+                    "high": c["high"],
+                    "low": c["low"],
+                    "close": c["close"],
+                    "volume": c["volume"],
+                }
+                for c in tail
+            ],
+            "current_price": float(candles[-1]["close"]),
+            "timeframe": timeframe,
+        }
+
+    def _initial_status(self, current_price: float, zone_low: float, zone_high: float) -> str:
+        if zone_low <= current_price <= zone_high:
+            return "ARMED"
+        return "CREATED"
+
+    @staticmethod
+    def _calc_rr(entry: float, stop_loss: float, take_profit: float | None) -> Optional[float]:
+        try:
+            if take_profit is None:
+                return None
+            risk = abs(float(entry) - float(stop_loss))
+            if risk <= 0:
+                return None
+            reward = abs(float(take_profit) - float(entry))
+            return round(reward / risk, 2)
+        except Exception:
+            return None

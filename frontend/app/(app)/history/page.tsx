@@ -93,9 +93,9 @@ export default function HistoryPage() {
   };
 
   const total = signals.length;
-  const wins = signals.filter((s) => s.status?.includes("tp")).length;
-  const losses = signals.filter((s) => s.status === "sl_hit").length;
-  const expired = signals.filter((s) => s.status === "expired" || s.status === "invalidated").length;
+  const wins = signals.filter((s) => s.status?.includes("tp") || s.status === "TP1_REACHED" || s.status === "TP2_REACHED").length;
+  const losses = signals.filter((s) => s.status === "sl_hit" || s.status === "STOPPED").length;
+  const expired = signals.filter((s) => ["expired", "invalidated", "EXPIRED", "INVALIDATED"].includes(s.status)).length;
   const closed = wins + losses;
   const winRate = closed > 0 ? Math.round((wins / closed) * 100) : 0;
   const winRateTrend: "up" | "down" | "neutral" = winRate >= 60 ? "up" : winRate >= 40 ? "neutral" : "down";

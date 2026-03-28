@@ -99,8 +99,16 @@ class SignalCreate(BaseModel):
     direction: str = Field(pattern=r"^(LONG|SHORT)$")
     timeframe: str = Field(pattern=r"^(1m|3m|5m|15m|30m|1H|4H|1D|1W)$")
     confidence: int = Field(ge=0, le=100)
+    setup_score: Optional[int] = Field(default=None, ge=0, le=100)
+    pwin_tp1: Optional[Decimal] = None
+    pwin_tp2: Optional[Decimal] = None
+    ranking_score: Optional[Decimal] = None
     entry: Decimal
+    entry_zone_low: Optional[Decimal] = None
+    entry_zone_high: Optional[Decimal] = None
+    entry_type: Optional[str] = None
     stop_loss: Decimal
+    invalidation_price: Optional[Decimal] = None
     take_profit_1: Decimal
     take_profit_2: Optional[Decimal] = None
     take_profit_3: Optional[Decimal] = None
@@ -111,7 +119,9 @@ class SignalCreate(BaseModel):
     ict_zones: Optional[Dict[str, Any]] = None
     candle_snapshot: Optional[Dict[str, Any]] = None
     mtf_analysis: Optional[Dict[str, Any]] = None
+    valid_until: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    status: str = "CREATED"
 
 
 class SignalResponse(BaseModel):
@@ -126,20 +136,32 @@ class SignalResponse(BaseModel):
     direction: str
     timeframe: str
     confidence: int
+    setup_score: Optional[int] = None
+    pwin_tp1: Optional[Decimal] = None
+    pwin_tp2: Optional[Decimal] = None
+    ranking_score: Optional[Decimal] = None
     entry: Decimal
+    entry_zone_low: Optional[Decimal] = None
+    entry_zone_high: Optional[Decimal] = None
+    entry_type: Optional[str] = None
     stop_loss: Decimal
+    invalidation_price: Optional[Decimal] = None
     take_profit_1: Decimal
     take_profit_2: Optional[Decimal] = None
     take_profit_3: Optional[Decimal] = None
     rr_ratio: Optional[Decimal] = None
+    rr_tp1: Optional[Decimal] = None
+    rr_tp2: Optional[Decimal] = None
     raw_score: int
     max_possible_score: int
     status: str
+    top_confluences: Optional[List[str]] = None
     score_breakdown: Optional[Dict[str, Any]] = None
     ict_zones: Optional[Dict[str, Any]] = None
     candle_snapshot: Optional[Dict[str, Any]] = None
     mtf_analysis: Optional[Dict[str, Any]] = None
     fired_at: datetime
+    valid_until: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     close_price: Optional[Decimal] = None
@@ -181,7 +203,21 @@ class SignalFilter(BaseModel):
     @classmethod
     def validate_status(cls, v: Optional[str]) -> Optional[str]:
         allowed = {
-            "active", "tp1_hit", "tp2_hit", "tp3_hit", "sl_hit", "expired"
+            "active",
+            "tp1_hit",
+            "tp2_hit",
+            "tp3_hit",
+            "sl_hit",
+            "expired",
+            "invalidated",
+            "CREATED",
+            "ARMED",
+            "FILLED",
+            "TP1_REACHED",
+            "TP2_REACHED",
+            "STOPPED",
+            "EXPIRED",
+            "INVALIDATED",
         }
         if v and v not in allowed:
             raise ValueError(f"status must be one of {allowed}")
@@ -192,6 +228,6 @@ class SignalStatusUpdate(BaseModel):
     """Payload for updating a signal's lifecycle status."""
 
     status: str = Field(
-        pattern=r"^(active|tp1_hit|tp2_hit|tp3_hit|sl_hit|expired)$"
+        pattern=r"^(active|tp1_hit|tp2_hit|tp3_hit|sl_hit|expired|invalidated|CREATED|ARMED|FILLED|TP1_REACHED|TP2_REACHED|STOPPED|EXPIRED|INVALIDATED)$"
     )
     close_price: Optional[Decimal] = None

@@ -17,6 +17,19 @@ from app.services.mailer import build_signal_email, send_email
 from app.services.system_config_service import load_system_config
 
 
+def _calc_rr(entry: float, stop_loss: float, take_profit: float | None) -> float | None:
+    try:
+        if take_profit is None:
+            return None
+        risk = abs(float(entry) - float(stop_loss))
+        if risk <= 0:
+            return None
+        reward = abs(float(take_profit) - float(entry))
+        return round(reward / risk, 2)
+    except Exception:
+        return None
+
+
 class AlertService:
     """Business logic for managing and dispatching alerts."""
 
@@ -232,8 +245,17 @@ class AlertService:
             message += f"✅ TP2: `{float(signal.take_profit_2):.8g}`\n"
         if signal.take_profit_3:
             message += f"✅ TP3: `{float(signal.take_profit_3):.8g}`\n"
-        if signal.rr_ratio:
-            message += f"\n⚖️ R:R Ratio: `1:{float(signal.rr_ratio):.2f}`\n"
+        rr_tp1 = _calc_rr(float(signal.entry), float(signal.stop_loss), float(signal.take_profit_1))
+        rr_tp2 = _calc_rr(
+            float(signal.entry),
+            float(signal.stop_loss),
+            float(signal.take_profit_2) if signal.take_profit_2 else None,
+        )
+        if rr_tp1 is not None:
+            message += f"\n⚖️ R:R TP1: `1:{float(rr_tp1):.2f}`"
+        if rr_tp2 is not None:
+            message += f"\n⚖️ R:R TP2: `1:{float(rr_tp2):.2f}`"
+        message += "\n"
         message += f"\n🔗 [View on PulseSignal Pro](https://signals.pulsetracker.net)"
 
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"

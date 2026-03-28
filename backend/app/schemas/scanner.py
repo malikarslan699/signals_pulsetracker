@@ -50,6 +50,12 @@ class PairResponse(BaseModel):
     base_asset: str
     quote_asset: str
     is_active: bool
+    auto_disabled: bool = False
+    manual_override: bool = False
+    health_score: Optional[Decimal] = None
+    health_status: Optional[str] = None
+    disable_reason: Optional[str] = None
+    last_health_check_at: Optional[datetime] = None
     precision_price: int
     precision_qty: int
     min_qty: Decimal

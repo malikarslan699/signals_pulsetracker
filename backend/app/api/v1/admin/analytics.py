@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models.signal import Signal
 from app.models.subscription import Subscription
 from app.models.user import User
+from app.services.signal_lifecycle import LOSS_SIGNAL_STATUSES, OPEN_SIGNAL_STATUSES, WIN_SIGNAL_STATUSES
 
 router = APIRouter(
     prefix="/admin/analytics",
@@ -99,7 +100,7 @@ async def overview(
 
     # Active signals
     active_signals_result = await db.execute(
-        select(func.count()).select_from(Signal).where(Signal.status == "active")
+        select(func.count()).select_from(Signal).where(Signal.status.in_(tuple(OPEN_SIGNAL_STATUSES)))
     )
     active_signals: int = active_signals_result.scalar_one()
 
@@ -110,7 +111,7 @@ async def overview(
         select(func.count())
         .select_from(Signal)
         .where(Signal.fired_at >= ninety_days_ago)
-        .where(Signal.status.in_(["tp1_hit", "tp2_hit", "tp3_hit"]))
+        .where(Signal.status.in_(tuple(WIN_SIGNAL_STATUSES)))
     )
     tp_count: int = tp_result.scalar_one()
 
@@ -118,7 +119,7 @@ async def overview(
         select(func.count())
         .select_from(Signal)
         .where(Signal.fired_at >= ninety_days_ago)
-        .where(Signal.status == "sl_hit")
+        .where(Signal.status.in_(tuple(LOSS_SIGNAL_STATUSES)))
     )
     sl_count: int = sl_result.scalar_one()
 
@@ -252,7 +253,7 @@ async def signal_analytics(
             .select_from(Signal)
             .where(Signal.symbol == symbol)
             .where(Signal.fired_at >= from_date)
-            .where(Signal.status.in_(["tp1_hit", "tp2_hit", "tp3_hit"]))
+            .where(Signal.status.in_(tuple(WIN_SIGNAL_STATUSES)))
         )
         sym_tp = sym_tp_result.scalar_one()
 
@@ -261,7 +262,7 @@ async def signal_analytics(
             .select_from(Signal)
             .where(Signal.symbol == symbol)
             .where(Signal.fired_at >= from_date)
-            .where(Signal.status == "sl_hit")
+            .where(Signal.status.in_(tuple(LOSS_SIGNAL_STATUSES)))
         )
         sym_sl = sym_sl_result.scalar_one()
 

@@ -143,6 +143,59 @@ async def create_tables() -> None:
             )
             logger.info("Migrated users.telegram_chat_id from INTEGER to BIGINT.")
 
+        signal_columns = {
+            "entry_zone_low": "ALTER TABLE public.signals ADD COLUMN entry_zone_low NUMERIC(20, 8)",
+            "entry_zone_high": "ALTER TABLE public.signals ADD COLUMN entry_zone_high NUMERIC(20, 8)",
+            "entry_type": "ALTER TABLE public.signals ADD COLUMN entry_type VARCHAR(32)",
+            "invalidation_price": "ALTER TABLE public.signals ADD COLUMN invalidation_price NUMERIC(20, 8)",
+            "valid_until": "ALTER TABLE public.signals ADD COLUMN valid_until TIMESTAMPTZ",
+            "setup_score": "ALTER TABLE public.signals ADD COLUMN setup_score INTEGER",
+            "pwin_tp1": "ALTER TABLE public.signals ADD COLUMN pwin_tp1 NUMERIC(5, 2)",
+            "pwin_tp2": "ALTER TABLE public.signals ADD COLUMN pwin_tp2 NUMERIC(5, 2)",
+            "ranking_score": "ALTER TABLE public.signals ADD COLUMN ranking_score NUMERIC(6, 2)",
+        }
+        for column_name, ddl in signal_columns.items():
+            exists_result = await conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'signals'
+                      AND column_name = :column_name
+                    """
+                ),
+                {"column_name": column_name},
+            )
+            if exists_result.scalar_one_or_none() is None:
+                await conn.execute(text(ddl))
+                logger.info(f"Added signals.{column_name} compatibility column.")
+
+        pair_columns = {
+            "auto_disabled": "ALTER TABLE public.pairs ADD COLUMN auto_disabled BOOLEAN NOT NULL DEFAULT false",
+            "manual_override": "ALTER TABLE public.pairs ADD COLUMN manual_override BOOLEAN NOT NULL DEFAULT false",
+            "health_score": "ALTER TABLE public.pairs ADD COLUMN health_score NUMERIC(5, 2)",
+            "health_status": "ALTER TABLE public.pairs ADD COLUMN health_status VARCHAR(20)",
+            "disable_reason": "ALTER TABLE public.pairs ADD COLUMN disable_reason TEXT",
+            "last_health_check_at": "ALTER TABLE public.pairs ADD COLUMN last_health_check_at TIMESTAMPTZ",
+        }
+        for column_name, ddl in pair_columns.items():
+            exists_result = await conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'pairs'
+                      AND column_name = :column_name
+                    """
+                ),
+                {"column_name": column_name},
+            )
+            if exists_result.scalar_one_or_none() is None:
+                await conn.execute(text(ddl))
+                logger.info(f"Added pairs.{column_name} compatibility column.")
+
         await _seed_pairs_if_empty(conn)
     logger.info("Database tables created successfully.")
 

@@ -69,7 +69,7 @@ interface ProviderHealthState {
 
 const defaultConfig: SystemConfig = {
   scanner_interval_minutes: 10,
-  min_signal_confidence: 60,
+  min_signal_confidence: 75,
   enable_crypto_scan: true,
   enable_forex_scan: true,
   maintenance_mode: false,

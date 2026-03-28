@@ -4,6 +4,7 @@ Admin-only endpoints for signal quality analysis and auditing.
 """
 from __future__ import annotations
 
+import json
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
@@ -14,6 +15,40 @@ from sqlalchemy import text
 from app.core.auth import get_current_active_user, require_role
 from app.database import get_db
 from app.models.user import User
+from app.services.pair_health_service import classify_pair_health
+
+
+def _parse_score_breakdown(value) -> dict:
+    import json
+
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _triggered_indicator_keys(score_breakdown: dict) -> set[str]:
+    triggered: set[str] = set()
+    for key, val in score_breakdown.items():
+        if not isinstance(val, dict):
+            continue
+        if not bool(val.get("triggered")):
+            continue
+        try:
+            score = float(val.get("score", 0) or 0)
+        except Exception:
+            score = 0.0
+        if score > 0:
+            triggered.add(str(key))
+    return triggered
+
 
 async def require_qa_access(current_user: User = Depends(get_current_active_user)) -> User:
     """Allow owner always; allow admin only if qa_access=True."""
@@ -48,8 +83,6 @@ async def signal_log(
     and QA reasoning for the internal testing zone.
     """
     from engine.qa_analyzer import analyze_signal
-    import json
-
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     conditions = ["fired_at >= :cutoff", "confidence >= :min_confidence"]
@@ -68,6 +101,7 @@ async def signal_log(
     where = " AND ".join(conditions)
     rows = await db.execute(text(f"""
         SELECT id, symbol, market, direction, timeframe, confidence,
+               setup_score, pwin_tp1, pwin_tp2, ranking_score,
                raw_score, max_possible_score, entry, stop_loss,
                take_profit_1, take_profit_2, take_profit_3, rr_ratio,
                status, pnl_pct, fired_at, expires_at, closed_at,
@@ -80,11 +114,8 @@ async def signal_log(
 
     signals = []
     for row in rows.mappings():
-        sb = row["score_breakdown"] or {}
+        sb = _parse_score_breakdown(row["score_breakdown"])
         mtf = row["mtf_analysis"] or {}
-        if isinstance(sb, str):
-            try: sb = json.loads(sb)
-            except: sb = {}
         if isinstance(mtf, str):
             try: mtf = json.loads(mtf)
             except: mtf = {}
@@ -112,6 +143,10 @@ async def signal_log(
             "direction": row["direction"],
             "timeframe": row["timeframe"],
             "confidence": row["confidence"],
+            "setup_score": row["setup_score"],
+            "pwin_tp1": float(row["pwin_tp1"]) if row["pwin_tp1"] is not None else None,
+            "pwin_tp2": float(row["pwin_tp2"]) if row["pwin_tp2"] is not None else None,
+            "ranking_score": float(row["ranking_score"]) if row["ranking_score"] is not None else None,
             "status": row["status"],
             "pnl_pct": float(row["pnl_pct"]) if row["pnl_pct"] is not None else None,
             "fired_at": row["fired_at"].isoformat() if row["fired_at"] else None,
@@ -213,6 +248,83 @@ async def qa_stats(
         GROUP BY direction
     """), {"cutoff": cutoff})
 
+    confidence_deciles_rows = await db.execute(text("""
+        SELECT
+            CONCAT((FLOOR(confidence / 10.0) * 10)::int, '-', (FLOOR(confidence / 10.0) * 10 + 9)::int) AS decile,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE status IN ('tp1_hit','tp2_hit','tp3_hit','TP1_REACHED','TP2_REACHED')) AS wins,
+            COUNT(*) FILTER (WHERE status IN ('sl_hit','STOPPED')) AS losses,
+            ROUND(AVG(pwin_tp1)::numeric, 1) AS avg_pwin_tp1,
+            ROUND(AVG(pwin_tp2)::numeric, 1) AS avg_pwin_tp2
+        FROM signals
+        WHERE fired_at >= :cutoff
+          AND confidence IS NOT NULL
+        GROUP BY FLOOR(confidence / 10.0)
+        ORDER BY FLOOR(confidence / 10.0)
+    """), {"cutoff": cutoff})
+
+    indicator_rows = await db.execute(text("""
+        SELECT score_breakdown, status
+        FROM signals
+        WHERE fired_at >= :cutoff
+          AND score_breakdown IS NOT NULL
+          AND status NOT IN ('active','CREATED','ARMED','FILLED')
+        LIMIT 500
+    """), {"cutoff": cutoff})
+
+    indicator_perf: dict[str, dict] = {}
+    for row in indicator_rows.mappings():
+        sb = _parse_score_breakdown(row["score_breakdown"])
+        triggered = _triggered_indicator_keys(sb)
+        is_win = str(row["status"]) in {'tp1_hit', 'tp2_hit', 'tp3_hit', 'TP1_REACHED', 'TP2_REACHED'}
+        is_loss = str(row["status"]) in {'sl_hit', 'STOPPED'}
+        for key in triggered:
+            current = indicator_perf.setdefault(key, {"indicator": key, "count": 0, "wins": 0, "losses": 0})
+            current["count"] += 1
+            if is_win:
+                current["wins"] += 1
+            if is_loss:
+                current["losses"] += 1
+
+    indicator_performance = []
+    for item in indicator_perf.values():
+        wins = item["wins"]
+        losses = item["losses"]
+        total = item["count"]
+        item["win_rate"] = win_rate(wins, losses)
+        item["quality_bias"] = round(((wins - losses) / total) * 100, 1) if total else 0.0
+        indicator_performance.append(item)
+    indicator_performance.sort(
+        key=lambda item: (
+            item["win_rate"] if item["win_rate"] is not None else -1,
+            item["count"],
+        ),
+        reverse=True,
+    )
+
+    pair_rows = await db.execute(text("""
+        SELECT
+            p.symbol,
+            p.market,
+            p.auto_disabled,
+            p.manual_override,
+            p.health_score,
+            p.health_status,
+            p.disable_reason,
+            COUNT(s.id) FILTER (WHERE s.status NOT IN ('active','CREATED','ARMED','FILLED')) AS total_closed,
+            COUNT(s.id) FILTER (WHERE s.status IN ('tp1_hit','tp2_hit','tp3_hit','TP1_REACHED','TP2_REACHED')) AS wins,
+            COUNT(s.id) FILTER (WHERE s.status IN ('sl_hit','STOPPED')) AS losses,
+            ROUND(AVG(s.pwin_tp1)::numeric, 1) AS avg_pwin_tp1,
+            ROUND(AVG(s.pnl_pct)::numeric, 2) AS avg_pnl
+        FROM pairs p
+        LEFT JOIN signals s
+          ON s.symbol = p.symbol
+         AND s.fired_at >= :cutoff
+        WHERE p.is_active = true
+        GROUP BY p.symbol, p.market, p.auto_disabled, p.manual_override, p.health_score, p.health_status, p.disable_reason
+        ORDER BY p.symbol
+    """), {"cutoff": cutoff})
+
     def win_rate(w, l):
         return round(w / (w + l) * 100, 1) if (w + l) > 0 else None
 
@@ -226,6 +338,36 @@ async def qa_stats(
             result.append(d)
         return result
 
+    confidence_deciles = to_list(confidence_deciles_rows)
+
+    pair_health = []
+    for row in pair_rows.mappings():
+        metrics = classify_pair_health(
+            total_closed=int(row["total_closed"] or 0),
+            wins=int(row["wins"] or 0),
+            losses=int(row["losses"] or 0),
+            avg_pwin_tp1=float(row["avg_pwin_tp1"] or 0),
+            avg_pnl=float(row["avg_pnl"] or 0),
+        )
+        pair_health.append(
+            {
+                "symbol": row["symbol"],
+                "market": row["market"],
+                "total_closed": int(row["total_closed"] or 0),
+                "wins": int(row["wins"] or 0),
+                "losses": int(row["losses"] or 0),
+                "win_rate": metrics["win_rate"],
+                "avg_pwin_tp1": float(row["avg_pwin_tp1"] or 0),
+                "avg_pnl": float(row["avg_pnl"] or 0),
+                "health_score": float(row["health_score"] or metrics["health_score"] or 0),
+                "health_status": row["health_status"] or metrics["health_status"],
+                "auto_disabled": bool(row["auto_disabled"]),
+                "manual_override": bool(row["manual_override"]),
+                "disable_reason": row["disable_reason"] or metrics["disable_reason"],
+            }
+        )
+    pair_health.sort(key=lambda item: (item["health_score"], item["total_closed"]), reverse=True)
+
     ov_dict = dict(ov) if ov else {}
     ov_w = ov_dict.get('wins', 0) or 0
     ov_l = ov_dict.get('losses', 0) or 0
@@ -238,6 +380,51 @@ async def qa_stats(
         "by_direction": to_list(by_dir),
         "noisy_pairs": to_list(noisy_pairs),
         "confidence_bands": to_list(bands),
+        "confidence_deciles": confidence_deciles,
+        "confidence_vs_win_rate": confidence_deciles,
+        "indicator_performance": indicator_performance[:25],
+        "pair_health": pair_health[:40],
+    }
+
+
+@router.patch("/pair-health/{symbol}/override", summary="Toggle pair manual override for auto-filtering")
+async def toggle_pair_override(
+    symbol: str,
+    enabled: bool,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_active_user),
+):
+    target = symbol.upper().strip()
+    await db.execute(
+        text(
+            """
+            UPDATE pairs
+            SET manual_override = :enabled
+            WHERE symbol = :symbol
+            """
+        ),
+        {"enabled": enabled, "symbol": target},
+    )
+    result = await db.execute(
+        text(
+            """
+            SELECT symbol, manual_override, auto_disabled, health_status, disable_reason
+            FROM pairs
+            WHERE symbol = :symbol
+            """
+        ),
+        {"symbol": target},
+    )
+    row = result.mappings().first()
+    if not row:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Pair not found")
+    return {
+        "symbol": row["symbol"],
+        "manual_override": bool(row["manual_override"]),
+        "auto_disabled": bool(row["auto_disabled"]),
+        "health_status": row["health_status"],
+        "disable_reason": row["disable_reason"],
     }
 
 
@@ -249,8 +436,6 @@ async def signal_qa_detail(
 ):
     """Full QA research record for a single signal."""
     from engine.qa_analyzer import analyze_signal, build_qa_summary_text
-    import json
-
     row = await db.execute(text("""
         SELECT id, symbol, market, direction, timeframe, confidence,
                raw_score, max_possible_score, entry, stop_loss,
@@ -265,11 +450,8 @@ async def signal_qa_detail(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Signal not found")
 
-    sb = sig["score_breakdown"] or {}
+    sb = _parse_score_breakdown(sig["score_breakdown"])
     mtf = sig["mtf_analysis"] or {}
-    if isinstance(sb, str):
-        try: sb = json.loads(sb)
-        except: sb = {}
     if isinstance(mtf, str):
         try: mtf = json.loads(mtf)
         except: mtf = {}
@@ -405,7 +587,6 @@ async def failure_analysis(
     - Confidence at time of loss (were we overconfident?)
     - Direction bias in failures (more LONGs fail or SHORTs?)
     """
-    import json
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     # SL hit stats by pair
@@ -490,22 +671,24 @@ async def failure_analysis(
     tp_indicator_counts: dict = {}
 
     def tally_indicators(rows, counter):
+        total_rows = 0
         for row in rows.mappings():
-            sb = row["score_breakdown"] or {}
-            if isinstance(sb, str):
-                try: sb = json.loads(sb)
-                except: continue
-            for key, val in sb.items():
-                if isinstance(val, (int, float)) and val > 0:
-                    counter[key] = counter.get(key, 0) + 1
+            sb = _parse_score_breakdown(row["score_breakdown"])
+            triggered = _triggered_indicator_keys(sb)
+            if not triggered:
+                continue
+            total_rows += 1
+            for key in triggered:
+                counter[key] = counter.get(key, 0) + 1
+        return total_rows
 
-    tally_indicators(sl_signals_raw, sl_indicator_counts)
-    tally_indicators(tp_signals_raw, tp_indicator_counts)
+    sl_total_rows = tally_indicators(sl_signals_raw, sl_indicator_counts)
+    tp_total_rows = tally_indicators(tp_signals_raw, tp_indicator_counts)
 
     # Build indicator comparison: appears more in losses = potentially noisy
     all_indicators = set(sl_indicator_counts) | set(tp_indicator_counts)
-    sl_total = sum(sl_indicator_counts.values()) or 1
-    tp_total = sum(tp_indicator_counts.values()) or 1
+    sl_total = sl_total_rows or 1
+    tp_total = tp_total_rows or 1
 
     indicator_comparison = []
     for ind in sorted(all_indicators):

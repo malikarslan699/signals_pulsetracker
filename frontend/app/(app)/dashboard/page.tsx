@@ -23,7 +23,7 @@ export default function DashboardPage() {
     direction: filterDir === "ALL" ? undefined : filterDir,
     timeframe: filterTf === "ALL" ? undefined : filterTf,
     status: "active",
-    min_confidence: 60,
+    min_confidence: 75,
     limit: 40,
   });
 

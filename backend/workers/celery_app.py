@@ -98,6 +98,12 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour='*/1'),
         'options': {'queue': 'default', 'priority': 2},
     },
+    # Refresh pair health and auto-filtering every hour
+    'refresh-pair-health': {
+        'task': 'workers.analytics_task.refresh_pair_health',
+        'schedule': crontab(hour='*/1', minute=15),
+        'options': {'queue': 'default', 'priority': 2},
+    },
     # Health check every minute
     'health-check': {
         'task': 'workers.scanner_task.health_check',
