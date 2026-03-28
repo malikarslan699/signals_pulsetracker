@@ -30,7 +30,15 @@ jobs:
       - name: Run backend tests
         run: |
           if python -m pytest --version > /dev/null 2>&1; then
+            set +e
             python -m pytest backend/ -x --tb=short -q
+            status=$?
+            set -e
+            if [ "$status" -eq 5 ]; then
+              echo "No backend tests discovered yet — skipping without failing CI"
+            elif [ "$status" -ne 0 ]; then
+              exit "$status"
+            fi
           else
             echo "pytest not available — skipping backend tests"
           fi
@@ -68,7 +76,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check deploy secrets
+        id: deploy_secrets
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          if [ -n "$SSH_HOST" ] && [ -n "$SSH_USER" ] && [ -n "$SSH_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Deploy secrets missing. Skipping deploy job cleanly."
+          fi
+
       - name: Deploy to server via SSH
+        if: steps.deploy_secrets.outputs.ready == 'true'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -82,3 +105,7 @@ jobs:
             docker compose pull
             docker compose up -d --build
             docker compose exec backend alembic upgrade head
+
+      - name: Deploy skipped notice
+        if: steps.deploy_secrets.outputs.ready != 'true'
+        run: echo "Deploy skipped because SSH secrets are not configured."
