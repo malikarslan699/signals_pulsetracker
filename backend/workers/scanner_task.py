@@ -19,6 +19,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from workers.celery_app import app
 from loguru import logger
+from app.services.signal_cache_keys import (
+    make_active_signal_member,
+    make_legacy_signal_cache_key,
+    make_signal_cache_key,
+    make_signal_cache_key_from_member,
+    parse_active_signal_member,
+)
 
 
 # ─── CRYPTO PAIRS (Top 100+ Binance Futures) ─────────────────────────────────
@@ -702,6 +709,19 @@ async def _store_signal(signal) -> bool:
 
         # Store as latest signal for symbol
         signal_payload = json.dumps(signal_dict, default=_json_default)
+        active_member = make_active_signal_member(
+            signal.symbol,
+            signal.direction,
+            signal.timeframe,
+            signal.id,
+        )
+        composite_key = make_signal_cache_key(
+            signal.symbol,
+            signal.direction,
+            signal.timeframe,
+            signal.id,
+        )
+
         r.set(f'signal:latest:{signal.symbol}:{signal.timeframe}',
               signal_payload, ex=86400)
         r.set(f'signal:id:{signal.id}', signal_payload, ex=86400)
@@ -709,8 +729,9 @@ async def _store_signal(signal) -> bool:
 
         # Add to active signals sorted set (score = ranking score / calibrated quality)
         active_score = float(getattr(signal, 'ranking_score', None) or signal.confidence or 0)
-        r.set(f'signal:{signal.symbol}', signal_payload, ex=86400)
-        r.zadd('active_signals', {signal.symbol: active_score})
+        r.delete(make_legacy_signal_cache_key(signal.symbol))
+        r.set(composite_key, signal_payload, ex=86400)
+        r.zadd('active_signals', {active_member: active_score})
         r.expire('active_signals', 86400)
 
         # Publish for WebSocket broadcast
@@ -872,21 +893,39 @@ def update_signal_statuses():
         from engine.data_fetcher import ForexDataFetcher
 
         r = redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
-        active_symbols = r.zrange('active_signals', 0, -1)
+        active_members = r.zrange('active_signals', 0, -1)
         price_cache: dict[tuple[str, str], float] = {}
         forex_fetcher = ForexDataFetcher() if _has_twelvedata_key() else None
         db_url = os.getenv('DATABASE_URL', '').replace('+asyncpg', '')
         engine = create_engine(db_url) if db_url else None
 
-        for symbol in active_symbols:
+        for active_member in active_members:
             try:
-                raw = r.get(f'signal:{symbol}')
+                member_meta = parse_active_signal_member(active_member)
+                member_key = (
+                    make_legacy_signal_cache_key(str(member_meta.get('symbol') or ''))
+                    if member_meta.get('is_legacy')
+                    else make_signal_cache_key_from_member(str(member_meta.get('member') or ''))
+                )
+                raw = r.get(member_key)
                 if not raw:
-                    r.zrem('active_signals', symbol)
+                    r.zrem('active_signals', active_member)
                     continue
                 signal = json.loads(raw)
                 symbol = signal.get('symbol')
                 market = str(signal.get('market') or 'crypto').lower()
+                signal_member = make_active_signal_member(
+                    str(signal.get('symbol') or ''),
+                    str(signal.get('direction') or ''),
+                    str(signal.get('timeframe') or ''),
+                    str(signal.get('id') or ''),
+                )
+                signal_key = make_signal_cache_key(
+                    str(signal.get('symbol') or ''),
+                    str(signal.get('direction') or ''),
+                    str(signal.get('timeframe') or ''),
+                    str(signal.get('id') or ''),
+                )
 
                 # Get current price
                 cache_key = (market, symbol)
@@ -1092,8 +1131,11 @@ def update_signal_statuses():
                                 conn.commit()
 
                         if is_final_status(new_status):
-                            r.zrem('active_signals', symbol)
-                            r.delete(f'signal:{symbol}')
+                            r.zrem('active_signals', active_member)
+                            r.zrem('active_signals', signal_member)
+                            r.delete(member_key)
+                            r.delete(signal_key)
+                            r.delete(make_legacy_signal_cache_key(symbol))
                             signal_id = signal.get('id')
                             if signal_id:
                                 r.delete(f'signal:id:{signal_id}')
@@ -1114,8 +1156,13 @@ def update_signal_statuses():
                                         4,
                                     )
                             refreshed = json.dumps(signal)
-                            r.set(f'signal:{symbol}', refreshed, ex=86400)
+                            if active_member != signal_member:
+                                r.zrem('active_signals', active_member)
+                            active_score = float(signal.get('ranking_score') or signal.get('confidence') or 0)
+                            r.set(signal_key, refreshed, ex=86400)
+                            r.delete(make_legacy_signal_cache_key(symbol))
                             r.set(f'signal:id:{signal.get("id")}', refreshed, ex=86400)
+                            r.zadd('active_signals', {signal_member: active_score})
 
                         logger.info(f"Signal {signal.get('id')} -> {new_status} at {exit_price or current_price}")
                     except Exception as e:

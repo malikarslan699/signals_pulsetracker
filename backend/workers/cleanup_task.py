@@ -3,10 +3,18 @@ Cleanup Task — PulseSignal Pro
 Removes old signals, cleans Redis, manages DB size.
 """
 import os
+import json
 from datetime import datetime, timezone, timedelta
 from loguru import logger
 
 from workers.celery_app import app
+from app.services.signal_cache_keys import (
+    make_active_signal_member,
+    make_legacy_signal_cache_key,
+    make_signal_cache_key,
+    make_signal_cache_key_from_member,
+    parse_active_signal_member,
+)
 from app.services.signal_lifecycle import (
     CANONICAL_OPEN_STATUS_SQL,
     FINAL_STATUS_SQL,
@@ -84,8 +92,10 @@ def expire_old_signals():
             pipe = r.pipeline()
             for row in expired_rows:
                 signal_id, symbol, direction, timeframe = row
-                pipe.zrem('active_signals', symbol)
-                pipe.delete(f'signal:{symbol}')
+                active_member = make_active_signal_member(symbol, direction, timeframe, str(signal_id))
+                pipe.zrem('active_signals', active_member)
+                pipe.delete(make_signal_cache_key(symbol, direction, timeframe, str(signal_id)))
+                pipe.delete(make_legacy_signal_cache_key(symbol))
                 pipe.delete(f'signal:id:{signal_id}')
                 pipe.delete(_open_signal_key(symbol, direction, timeframe))
             pipe.execute()
@@ -145,7 +155,6 @@ def purge_low_quality_signals(min_confidence: int | None = None):
     2. Mark them expired in PostgreSQL
     3. Deduplicate Redis: keep only highest-confidence signal per symbol+direction+timeframe
     """
-    import json
     import redis as redis_lib
 
     r = redis_lib.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
@@ -164,24 +173,46 @@ def purge_low_quality_signals(min_confidence: int | None = None):
     expired_db = 0
 
     # ── Step 1: Remove low-confidence entries from canonical active cache ──
-    active_symbols = r.zrange('active_signals', 0, -1)
-    if active_symbols:
+    active_members = r.zrange('active_signals', 0, -1)
+    if active_members:
         pipe = r.pipeline()
-        for symbol in active_symbols:
-            raw = r.get(f'signal:{symbol}')
+        for active_member in active_members:
+            member_meta = parse_active_signal_member(active_member)
+            cache_key = (
+                make_legacy_signal_cache_key(str(member_meta.get('symbol') or ''))
+                if member_meta.get('is_legacy')
+                else make_signal_cache_key_from_member(str(member_meta.get('member') or ''))
+            )
+            raw = r.get(cache_key)
             if not raw:
-                pipe.zrem('active_signals', symbol)
+                pipe.zrem('active_signals', active_member)
                 continue
             try:
                 sig = json.loads(raw)
             except Exception:
-                pipe.zrem('active_signals', symbol)
-                pipe.delete(f'signal:{symbol}')
+                pipe.zrem('active_signals', active_member)
+                pipe.delete(cache_key)
                 continue
             confidence = int(sig.get('confidence', 0) or 0)
             if confidence < min_confidence:
-                pipe.zrem('active_signals', symbol)
-                pipe.delete(f'signal:{symbol}')
+                canonical_member = make_active_signal_member(
+                    str(sig.get('symbol', '')),
+                    str(sig.get('direction', '')),
+                    str(sig.get('timeframe', '')),
+                    str(sig.get('id', '')),
+                )
+                pipe.zrem('active_signals', active_member)
+                pipe.zrem('active_signals', canonical_member)
+                pipe.delete(cache_key)
+                pipe.delete(
+                    make_signal_cache_key(
+                        str(sig.get('symbol', '')),
+                        str(sig.get('direction', '')),
+                        str(sig.get('timeframe', '')),
+                        str(sig.get('id', '')),
+                    )
+                )
+                pipe.delete(make_legacy_signal_cache_key(str(sig.get('symbol', ''))))
                 signal_id = sig.get('id')
                 if signal_id:
                     pipe.delete(f'signal:id:{signal_id}')

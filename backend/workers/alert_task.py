@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from loguru import logger
 
 from workers.celery_app import app
+from app.services.signal_cache_keys import make_signal_cache_key_from_member
 
 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
@@ -170,15 +171,15 @@ async def _send_signal_alerts_async(signal_id: str) -> dict:
 
         # 2) Canonical symbol-key cache referenced by active_signals zset
         if not signal_data:
-            active_symbols = r.zrange('active_signals', 0, -1)
-            for symbol_raw in active_symbols:
+            active_members = r.zrange('active_signals', 0, -1)
+            for member_raw in active_members:
                 try:
-                    symbol = (
-                        symbol_raw.decode()
-                        if isinstance(symbol_raw, (bytes, bytearray))
-                        else str(symbol_raw)
+                    member = (
+                        member_raw.decode()
+                        if isinstance(member_raw, (bytes, bytearray))
+                        else str(member_raw)
                     )
-                    payload = r.get(f'signal:{symbol}')
+                    payload = r.get(make_signal_cache_key_from_member(member))
                     if not payload:
                         continue
                     sig = json_lib.loads(payload)

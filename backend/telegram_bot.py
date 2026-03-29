@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timezone
 
 import redis
+from app.services.signal_cache_keys import make_signal_cache_key_from_member
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -207,22 +208,22 @@ async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Get signals from Redis
     try:
-        active_symbols = r.zrevrange("active_signals", 0, 4, withscores=True)
+        active_members = r.zrevrange("active_signals", 0, 4, withscores=True)
 
-        if not active_symbols:
+        if not active_members:
             await update.message.reply_text("No active signals right now. Check back soon!")
             return
 
         msg = "📊 <b>Latest Signals — PulseSignal Pro</b>\n\n"
 
-        for symbol_raw, score in active_symbols:
+        for member_raw, score in active_members:
             try:
-                symbol_key = (
-                    symbol_raw.decode("utf-8", errors="ignore")
-                    if isinstance(symbol_raw, (bytes, bytearray))
-                    else str(symbol_raw)
+                member_key = (
+                    member_raw.decode("utf-8", errors="ignore")
+                    if isinstance(member_raw, (bytes, bytearray))
+                    else str(member_raw)
                 )
-                raw = r.get(f"signal:{symbol_key}")
+                raw = r.get(make_signal_cache_key_from_member(member_key))
                 if not raw:
                     continue
                 sig = json.loads(raw)

@@ -267,7 +267,12 @@ class SignalService:
 
         # Remove from Redis active set if closed
         if is_final_status(signal.status):
-            await self._redis.remove_signal(signal.symbol)
+            await self._redis.remove_signal(
+                signal.symbol,
+                direction=signal.direction,
+                timeframe=signal.timeframe,
+                signal_id=str(signal.id),
+            )
 
         await self._db.flush()
         logger.info(f"Signal {signal_id} status updated to '{signal.status}'.")

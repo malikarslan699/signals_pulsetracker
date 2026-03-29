@@ -14,6 +14,13 @@ from app.services.signal_lifecycle import (
     CANONICAL_OPEN_STATUS_SQL,
     canonicalize_status,
 )
+from app.services.signal_cache_keys import (
+    make_active_signal_member,
+    make_legacy_signal_cache_key,
+    make_signal_cache_key,
+    make_signal_cache_key_from_member,
+    parse_active_signal_member,
+)
 from workers.scanner_task import _has_twelvedata_key, _run_async
 
 
@@ -42,9 +49,9 @@ def revalidate_active_signals():
         from engine.data_fetcher import ForexDataFetcher
 
         r = redis_lib.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
-        active_symbols = r.zrange('active_signals', 0, -1)
+        active_members = r.zrange('active_signals', 0, -1)
 
-        if not active_symbols:
+        if not active_members:
             return {'checked': 0, 'invalidated': 0}
 
         checked = 0
@@ -52,11 +59,17 @@ def revalidate_active_signals():
         price_cache: dict[tuple[str, str], float] = {}
         forex_fetcher = ForexDataFetcher() if _has_twelvedata_key() else None
 
-        for symbol in active_symbols:
+        for active_member in active_members:
             try:
-                raw = r.get(f'signal:{symbol}')
+                member_meta = parse_active_signal_member(active_member)
+                cache_key = (
+                    make_legacy_signal_cache_key(str(member_meta.get('symbol') or ''))
+                    if member_meta.get('is_legacy')
+                    else make_signal_cache_key_from_member(str(member_meta.get('member') or ''))
+                )
+                raw = r.get(cache_key)
                 if not raw:
-                    r.zrem('active_signals', symbol)
+                    r.zrem('active_signals', active_member)
                     continue
                 signal = json.loads(raw)
                 symbol = signal.get('symbol', '')
@@ -124,7 +137,7 @@ def revalidate_active_signals():
                     )
 
                 if invalidation_reason:
-                    _invalidate_signal(r, signal, invalidation_reason)
+                    _invalidate_signal(r, signal, invalidation_reason, active_member)
                     invalidated += 1
 
             except Exception as e:
@@ -144,14 +157,22 @@ def revalidate_active_signals():
         return {'error': str(e)}
 
 
-def _invalidate_signal(r, signal: dict, reason: str):
+def _invalidate_signal(r, signal: dict, reason: str, active_member: str | None = None):
     """Mark signal as invalidated in Redis and DB."""
     signal_id = signal.get('id')
+    symbol = str(signal.get('symbol', ''))
+    direction = str(signal.get('direction', ''))
+    timeframe = str(signal.get('timeframe', ''))
+    canonical_member = make_active_signal_member(symbol, direction, timeframe, str(signal_id or ''))
+    composite_key = make_signal_cache_key(symbol, direction, timeframe, str(signal_id or ''))
 
     # Remove from Redis active sets
     try:
-        r.zrem('active_signals', signal.get('symbol', ''))
-        r.delete(f"signal:{signal.get('symbol', '')}")
+        if active_member:
+            r.zrem('active_signals', active_member)
+        r.zrem('active_signals', canonical_member)
+        r.delete(composite_key)
+        r.delete(make_legacy_signal_cache_key(symbol))
         if signal_id:
             r.delete(f"signal:id:{signal_id}")
     except Exception as e:

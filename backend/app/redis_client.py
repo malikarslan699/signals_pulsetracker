@@ -10,6 +10,13 @@ from redis.exceptions import ResponseError
 from loguru import logger
 
 from app.config import get_settings
+from app.services.signal_cache_keys import (
+    make_active_signal_member,
+    make_legacy_signal_cache_key,
+    make_signal_cache_key,
+    make_signal_cache_key_from_member,
+    parse_active_signal_member,
+)
 
 settings = get_settings()
 
@@ -48,7 +55,6 @@ class RedisClient:
 
     # Key prefixes
     _CANDLES_KEY = "candles:{symbol}:{timeframe}"
-    _SIGNAL_KEY = "signal:{symbol}"
     _SIGNAL_BY_ID_KEY = "signal:id:{signal_id}"
     _ACTIVE_SIGNALS_KEY = "active_signals"
     _SCANNER_QUEUE_KEY = "scanner:queue"
@@ -129,14 +135,18 @@ class RedisClient:
     # Signal Cache
     # ------------------------------------------------------------------
     async def set_signal(self, symbol: str, signal_data: dict) -> None:
-        """Store the latest signal for a symbol and add to active-signals set."""
-        key = self._SIGNAL_KEY.format(symbol=symbol)
+        """Store an active signal using a composite cache key and active-set member."""
+        signal_id = str(signal_data.get("id") or "")
+        direction = str(signal_data.get("direction") or "")
+        timeframe = str(signal_data.get("timeframe") or "")
+        member = make_active_signal_member(symbol, direction, timeframe, signal_id)
+        key = make_signal_cache_key(symbol, direction, timeframe, signal_id)
         payload = json.dumps(signal_data)
-        signal_id = signal_data.get("id")
 
         # TTL: 24 hours for individual signal
         pipe = self._r.pipeline()
         pipe.set(key, payload, ex=86400)
+        pipe.delete(make_legacy_signal_cache_key(symbol))
         if signal_id:
             pipe.set(
                 self._SIGNAL_BY_ID_KEY.format(signal_id=signal_id),
@@ -147,35 +157,60 @@ class RedisClient:
         rank_score = signal_data.get("ranking_score")
         confidence = signal_data.get("confidence", 0)
         sort_score = float(rank_score if rank_score is not None else confidence)
-        pipe.zadd(self._ACTIVE_SIGNALS_KEY, {symbol: sort_score})
+        pipe.zadd(self._ACTIVE_SIGNALS_KEY, {member: sort_score})
         pipe.expire(self._ACTIVE_SIGNALS_KEY, 86400)
         await pipe.execute()
 
-    async def get_signal(self, symbol: str) -> Optional[dict]:
-        """Return the latest cached signal for a symbol."""
-        key = self._SIGNAL_KEY.format(symbol=symbol)
+    async def get_signal(self, member_or_symbol: str) -> Optional[dict]:
+        """Return a cached signal by composite member, falling back to legacy symbol-only keys."""
+        parsed = parse_active_signal_member(member_or_symbol)
+        if parsed["is_legacy"]:
+            key = make_legacy_signal_cache_key(str(parsed["symbol"] or member_or_symbol))
+        else:
+            key = make_signal_cache_key_from_member(str(parsed["member"]))
         raw = await self._r.get(key)
         return json.loads(raw) if raw else None
 
     async def get_all_active_signals(self) -> list[dict]:
         """Return all active signals sorted by confidence descending."""
-        symbols = await self._r.zrevrangebyscore(
+        members = await self._r.zrevrangebyscore(
             self._ACTIVE_SIGNALS_KEY, "+inf", "-inf"
         )
         signals: list[dict] = []
-        for symbol in symbols:
-            data = await self.get_signal(symbol)
+        for member in members:
+            data = await self.get_signal(member)
             if data:
                 signals.append(data)
+            else:
+                await self._r.zrem(self._ACTIVE_SIGNALS_KEY, member)
         return signals
 
-    async def remove_signal(self, symbol: str) -> None:
-        """Remove a signal from cache and active-signals set."""
-        key = self._SIGNAL_KEY.format(symbol=symbol)
+    async def remove_signal(
+        self,
+        symbol: str,
+        *,
+        direction: str | None = None,
+        timeframe: str | None = None,
+        signal_id: str | None = None,
+    ) -> None:
+        """Remove a signal from cache and the active-signals set."""
+        member = None
+        key = make_legacy_signal_cache_key(symbol)
+        if direction and timeframe and signal_id:
+            member = make_active_signal_member(symbol, direction, timeframe, signal_id)
+            key = make_signal_cache_key(symbol, direction, timeframe, signal_id)
         raw_current = await self._r.get(key)
         pipe = self._r.pipeline()
         pipe.delete(key)
-        pipe.zrem(self._ACTIVE_SIGNALS_KEY, symbol)
+        pipe.delete(make_legacy_signal_cache_key(symbol))
+        if member:
+            pipe.zrem(self._ACTIVE_SIGNALS_KEY, member)
+        else:
+            members = await self._r.zrange(self._ACTIVE_SIGNALS_KEY, 0, -1)
+            for active_member in members:
+                parsed = parse_active_signal_member(active_member)
+                if str(parsed.get("symbol") or "").upper() == str(symbol or "").upper():
+                    pipe.zrem(self._ACTIVE_SIGNALS_KEY, active_member)
         if raw_current:
             try:
                 signal_id = json.loads(raw_current).get("id")
