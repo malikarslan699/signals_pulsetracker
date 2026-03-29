@@ -172,24 +172,16 @@ class MasterScorer:
 
         # Store references to avoid repeated imports on every call
         self._ema_stack = ema_stack
-        self._sma_cross = sma_cross
-        self._hma_direction = hma_direction
         self._supertrend = supertrend
         self._ichimoku = ichimoku
         self._rsi_analysis = rsi_analysis
-        self._stochastic_rsi = stochastic_rsi
         self._macd = macd
-        self._cci = cci
-        self._williams_r = williams_r
         self._mfi = mfi
         self._bollinger_bands = bollinger_bands
         self._keltner_channels = keltner_channels
-        self._donchian_channels = donchian_channels
         self._atr_analysis = atr_analysis
         self._volume_spike = volume_spike
-        self._obv = obv
         self._vwap = vwap
-        self._cmf = cmf
         self._detect_market_structure = detect_market_structure
         self._detect_support_resistance = detect_support_resistance
         self._find_fib_zone = find_fib_retracement_zone
