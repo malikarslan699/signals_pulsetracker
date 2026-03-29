@@ -14,11 +14,16 @@ export interface ScannerStatus {
 }
 
 export interface ScannerResult {
+  id?: string;
   symbol: string;
   market: string;
-  signals_count: number;
+  direction?: "LONG" | "SHORT";
+  timeframe?: string;
+  signals_count?: number;
   last_signal?: string;
   confidence?: number;
+  pwin_tp1?: number;
+  ranking_score?: number;
 }
 
 interface ScannerResultsResponse {
@@ -26,6 +31,8 @@ interface ScannerResultsResponse {
   count: number;
   min_confidence: number;
   market_filter?: string;
+  timeframe_filter?: string;
+  limit?: number;
 }
 
 interface UseScannerResultsOptions {

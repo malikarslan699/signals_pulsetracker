@@ -1,4 +1,4 @@
-export const TIMEFRAMES = ["5m", "15m", "1H", "4H", "1D"];
+export const TIMEFRAMES = ["15m", "1H", "4H", "1D"];
 export const MARKETS = ["crypto", "forex"];
 export const DIRECTIONS = ["LONG", "SHORT"];
 

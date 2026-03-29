@@ -37,7 +37,6 @@ interface QASignal {
     triggered_indicators: string[];
     aligned_tfs: string[];
     conflicting_tfs: string[];
-    tf_5m_confirmed: boolean;
     tf_15m_confirmed: boolean;
     tf_1h_confirmed: boolean;
     tf_4h_confirmed: boolean;
@@ -129,7 +128,6 @@ function SignalQARow({ signal }: { signal: QASignal }) {
           {signal.pnl_pct != null ? `${signal.pnl_pct > 0 ? "+" : ""}${signal.pnl_pct.toFixed(2)}%` : "—"}
         </span>
         <div className="flex gap-1 ml-2">
-          {tfBadge("5m", qa.tf_5m_confirmed)}
           {tfBadge("15m", qa.tf_15m_confirmed)}
           {tfBadge("1H", qa.tf_1h_confirmed)}
           {tfBadge("4H", qa.tf_4h_confirmed)}
@@ -324,7 +322,7 @@ export default function QALabPage() {
               </button>
             ))}
             <div className="ml-auto flex gap-2">
-              {["ALL", "5m", "15m", "1H", "4H"].map((tf) => (
+              {["ALL", "15m", "1H", "4H"].map((tf) => (
                 <button key={tf} onClick={() => setFilterTf(tf)}
                   className={`px-2.5 py-1 text-xs rounded border transition-all ${filterTf === tf ? "bg-blue text-white border-blue" : "bg-surface border-border text-text-muted"}`}>
                   {tf}
@@ -386,7 +384,7 @@ export default function QALabPage() {
                 <StatCard label="Wins (TP Hit)" value={stats.overall.wins} color="text-long" />
                 <StatCard label="Losses (SL)" value={stats.overall.losses} color="text-short" />
                 <StatCard label="Expired" value={stats.overall.expired} color="text-text-muted" />
-                <StatCard label="Avg Confidence" value={`${stats.overall.avg_confidence ?? "—"}%`} />
+                <StatCard label="Avg P(TP1)" value={`${stats.overall.avg_confidence ?? "—"}%`} />
                 <StatCard label="Avg R/R" value={`${stats.overall.avg_rr ?? "—"}R`} />
               </div>
 
@@ -404,7 +402,7 @@ export default function QALabPage() {
                     <th className="px-4 py-2 text-right">Wins</th>
                     <th className="px-4 py-2 text-right">Losses</th>
                     <th className="px-4 py-2 text-right">Win Rate</th>
-                    <th className="px-4 py-2 text-right">Avg Conf</th>
+                    <th className="px-4 py-2 text-right">Avg P(TP1)</th>
                   </tr></thead>
                   <tbody>
                     {stats.by_timeframe.map((row) => (
@@ -429,7 +427,7 @@ export default function QALabPage() {
               <div className="bg-surface border border-border rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-border">
                   <p className="text-sm font-semibold text-text-primary flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-purple" /> Confidence Band Distribution
+                    <Zap className="w-4 h-4 text-purple" /> Probability Band Distribution
                   </p>
                 </div>
                 <table className="w-full text-sm">
@@ -461,7 +459,7 @@ export default function QALabPage() {
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 <div className="bg-surface border border-border rounded-xl overflow-hidden">
                   <div className="px-4 py-3 border-b border-border">
-                    <p className="text-sm font-semibold text-text-primary">Confidence Deciles</p>
+                    <p className="text-sm font-semibold text-text-primary">P(TP1) Deciles</p>
                     <p className="text-xs text-text-muted mt-0.5">Calibrated TP1 probability grouped into deciles</p>
                   </div>
                   <table className="w-full text-sm">
@@ -712,8 +710,8 @@ export default function QALabPage() {
                     <th className="px-4 py-2 text-right">TP Hits</th>
                     <th className="px-4 py-2 text-right">SL Hits</th>
                     <th className="px-4 py-2 text-right">Win Rate</th>
-                    <th className="px-4 py-2 text-right">Avg Conf Win</th>
-                    <th className="px-4 py-2 text-right">Avg Conf Loss</th>
+                    <th className="px-4 py-2 text-right">Avg P(TP1) Win</th>
+                    <th className="px-4 py-2 text-right">Avg P(TP1) Loss</th>
                   </tr></thead>
                   <tbody>
                     {failureData.sl_by_timeframe?.map((row: any) => (
@@ -777,7 +775,7 @@ export default function QALabPage() {
                 <div className="bg-surface border border-short/20 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 border-b border-border">
                     <p className="text-sm font-semibold text-short flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4" /> High-Confidence Losses (conf ≥85 but SL hit)
+                      <AlertTriangle className="w-4 h-4" /> High-P(TP1) Losses (P(TP1) ≥85 but SL hit)
                     </p>
                   </div>
                   <table className="w-full text-sm">
@@ -785,7 +783,7 @@ export default function QALabPage() {
                       <th className="px-4 py-2 text-left">Pair</th>
                       <th className="px-4 py-2">Dir</th>
                       <th className="px-4 py-2">TF</th>
-                      <th className="px-4 py-2 text-right">Conf</th>
+                      <th className="px-4 py-2 text-right">P(TP1)</th>
                       <th className="px-4 py-2 text-right">R:R</th>
                       <th className="px-4 py-2 text-right">PnL</th>
                       <th className="px-4 py-2 text-right">Held (hrs)</th>

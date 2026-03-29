@@ -87,14 +87,17 @@ async def scanner_status(
 )
 async def scanner_results(
     market: Optional[str] = Query(default=None),
+    timeframe: Optional[str] = Query(default=None),
     min_confidence: int = Query(default=75, ge=0, le=100),
+    limit: int = Query(default=100, ge=1, le=500),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     redis: RedisClient = Depends(get_redis_client),
 ) -> dict:
     """
     Return the most recent scanner results from the Redis active-signals sorted set.
-    Filters by market and minimum confidence. ICT fields are hidden for free users.
+    Filters by market, timeframe, and minimum confidence. ICT fields are hidden for
+    free users.
     """
     if not has_permission(current_user, Permission.ACCESS_SCANNER):
         # Free users can still see limited results — just no ICT
@@ -105,11 +108,19 @@ async def scanner_results(
     # Apply filters
     filtered = []
     for sig in all_signals:
-        if sig.get("confidence", 0) < min_confidence:
+        probability = sig.get("pwin_tp1")
+        if probability is None:
+            probability = sig.get("confidence", 0)
+        if probability < min_confidence:
             continue
         if market and sig.get("market") != market:
             continue
+        if timeframe and sig.get("timeframe") != timeframe:
+            continue
         filtered.append(sig)
+
+    if limit:
+        filtered = filtered[:limit]
 
     can_see_ict = has_permission(current_user, Permission.READ_ICT)
     if not can_see_ict:
@@ -126,6 +137,8 @@ async def scanner_results(
         "count": len(filtered),
         "min_confidence": min_confidence,
         "market_filter": market,
+        "timeframe_filter": timeframe,
+        "limit": limit,
     }
 
 

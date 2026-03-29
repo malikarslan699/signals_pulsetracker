@@ -121,7 +121,6 @@ def analyze_signal(
         else:
             conflicting_tfs.append(tf)
 
-    tf_5m_ok = '5m' in aligned_tfs
     tf_15m_ok = '15m' in aligned_tfs
     tf_1h_ok = '1H' in aligned_tfs
     tf_4h_ok = '4H' in aligned_tfs
@@ -129,7 +128,7 @@ def analyze_signal(
     # ── Why generated ─────────────────────────────────────────────────────
     conf_band = _confidence_band(confidence)
     reason_parts = [
-        f"{direction} signal on {symbol} ({timeframe}) with {confidence}% confidence ({conf_band}).",
+        f"{direction} signal on {symbol} ({timeframe}) with P(TP1) {confidence}% ({conf_band}).",
     ]
 
     if confirmations_present:
@@ -138,8 +137,6 @@ def analyze_signal(
         reason_parts.append(f"HTF alignment: {', '.join(sorted(aligned_tfs))}.")
     if conflicting_tfs:
         reason_parts.append(f"Conflicting timeframes: {', '.join(sorted(conflicting_tfs))}.")
-    if not tf_5m_ok and '5m' in mtf_analysis:
-        reason_parts.append("WARNING: 5m not aligned.")
     if not tf_15m_ok and '15m' in mtf_analysis:
         reason_parts.append("WARNING: 15m not aligned.")
 
@@ -151,9 +148,9 @@ def analyze_signal(
     elif confidence >= 80:
         strength = "STRONG — high confluence, most indicators aligned"
     elif confidence >= 75:
-        strength = "SOLID — minimum qualifying threshold met, multiple confirmations"
+        strength = "SOLID — launch-quality threshold met with multiple confirmations"
     else:
-        strength = "WEAK — below quality threshold (should not have been generated)"
+        strength = "WEAK — below the current quality threshold"
 
     # ── Risk assessment ───────────────────────────────────────────────────
     if stop_loss > 0 and entry > 0:
@@ -174,10 +171,12 @@ def analyze_signal(
         outcome = f"OPEN — TP1 reached, monitoring TP2. Locked PnL: {pnl_pct:+.2f}%" if pnl_pct is not None else "OPEN — TP1 reached, monitoring TP2"
     elif status == 'STOPPED':
         outcome = f"LOSS — SL hit. PnL: {pnl_pct:+.2f}%" if pnl_pct is not None else "LOSS — SL hit"
-    elif status in ('EXPIRED', 'INVALIDATED'):
-        outcome = "EXPIRED — price did not reach TP or SL within signal window"
+    elif status == 'EXPIRED':
+        outcome = "EXPIRED — entry window closed before the setup completed"
+    elif status == 'INVALIDATED':
+        outcome = "INVALIDATED — structure broke before the setup could complete"
     elif status in ('CREATED', 'ARMED', 'FILLED'):
-        outcome = "ACTIVE — signal still open"
+        outcome = "OPEN — signal still active"
     else:
         outcome = f"STATUS: {status}"
 
@@ -190,7 +189,6 @@ def analyze_signal(
         'mtf_summary': mtf_summary,
         'aligned_tfs': aligned_tfs,
         'conflicting_tfs': conflicting_tfs,
-        'tf_5m_confirmed': tf_5m_ok,
         'tf_15m_confirmed': tf_15m_ok,
         'tf_1h_confirmed': tf_1h_ok,
         'tf_4h_confirmed': tf_4h_ok,

@@ -93,7 +93,6 @@ export default function DashboardPage() {
                 label: "Timeframe",
                 options: [
                   { label: "All", value: "ALL" },
-                  { label: "5m", value: "5m" },
                   { label: "15m", value: "15m" },
                   { label: "1H", value: "1H" },
                   { label: "4H", value: "4H" },

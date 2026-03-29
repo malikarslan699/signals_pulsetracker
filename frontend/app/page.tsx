@@ -30,7 +30,7 @@ const FEATURES = [
     icon: BarChart2,
     title: "Multi-Timeframe Analysis",
     description:
-      "Signals validated across 5m, 15m, 1H, 4H and 1D timeframes for maximum confluence.",
+      "Signals validated across 15m, 1H, 4H and higher-timeframe context for stronger confluence.",
     color: "text-long",
     bg: "bg-long/10",
   },

@@ -128,7 +128,7 @@ export default function HistoryPage() {
             ))}
           </div>
           <div className="flex items-center gap-0.5">
-            {["ALL", "5m", "15m", "1H", "4H"].map((tf) => (
+            {["ALL", "15m", "1H", "4H"].map((tf) => (
               <button key={tf} onClick={() => setTimeframe(tf)}
                 className={`filter-pill ${timeframe === tf ? "filter-pill-active" : ""}`}>
                 {tf}

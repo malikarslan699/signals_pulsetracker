@@ -94,7 +94,7 @@ async def signal_log(
     from engine.qa_analyzer import analyze_signal
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    conditions = ["fired_at >= :cutoff", "confidence >= :min_confidence"]
+    conditions = ["fired_at >= :cutoff", "COALESCE(pwin_tp1, confidence) >= :min_confidence"]
     params: dict = {"cutoff": cutoff, "min_confidence": min_confidence, "limit": limit}
 
     if market:
@@ -191,7 +191,7 @@ async def qa_stats(
             COUNT(*) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL}) as losses,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_STALE_STATUS_SQL}) as expired,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_OPEN_STATUS_SQL}) as active,
-            ROUND(AVG(confidence)::numeric, 1) as avg_confidence,
+            ROUND(AVG(COALESCE(pwin_tp1, confidence))::numeric, 1) as avg_confidence,
             ROUND(AVG(rr_ratio)::numeric, 2) as avg_rr
         FROM signals
         WHERE fired_at >= :cutoff
@@ -204,7 +204,7 @@ async def qa_stats(
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL}) as wins,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL}) as losses,
-            ROUND(AVG(confidence)::numeric,1) as avg_confidence
+            ROUND(AVG(COALESCE(pwin_tp1, confidence))::numeric,1) as avg_confidence
         FROM signals WHERE fired_at >= :cutoff
         GROUP BY timeframe ORDER BY total DESC
     """), {"cutoff": cutoff})
@@ -222,7 +222,7 @@ async def qa_stats(
     # Noisy pairs (most signals generated)
     noisy_pairs = await db.execute(text(f"""
         SELECT symbol, COUNT(*) as signal_count,
-            ROUND(AVG(confidence)::numeric,1) as avg_confidence,
+            ROUND(AVG(COALESCE(pwin_tp1, confidence))::numeric,1) as avg_confidence,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL}) as wins,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL}) as losses
         FROM signals WHERE fired_at >= :cutoff
@@ -233,10 +233,10 @@ async def qa_stats(
     bands = await db.execute(text(f"""
         SELECT
             CASE
-                WHEN confidence >= 90 THEN 'ULTRA_HIGH (90+)'
-                WHEN confidence >= 80 THEN 'HIGH+ (80-89)'
-                WHEN confidence >= 75 THEN 'HIGH (75-79)'
-                WHEN confidence >= 65 THEN 'MEDIUM+ (65-74)'
+                WHEN COALESCE(pwin_tp1, confidence) >= 90 THEN 'ULTRA_HIGH (90+)'
+                WHEN COALESCE(pwin_tp1, confidence) >= 80 THEN 'HIGH+ (80-89)'
+                WHEN COALESCE(pwin_tp1, confidence) >= 75 THEN 'HIGH (75-79)'
+                WHEN COALESCE(pwin_tp1, confidence) >= 65 THEN 'MEDIUM+ (65-74)'
                 ELSE 'BELOW_THRESHOLD (<65)'
             END as band,
             COUNT(*) as count,
@@ -259,7 +259,7 @@ async def qa_stats(
 
     confidence_deciles_rows = await db.execute(text(f"""
         SELECT
-            CONCAT((FLOOR(confidence / 10.0) * 10)::int, '-', (FLOOR(confidence / 10.0) * 10 + 9)::int) AS decile,
+            CONCAT((FLOOR(COALESCE(pwin_tp1, confidence) / 10.0) * 10)::int, '-', (FLOOR(COALESCE(pwin_tp1, confidence) / 10.0) * 10 + 9)::int) AS decile,
             COUNT(*) AS total,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL}) AS wins,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL}) AS losses,
@@ -267,9 +267,9 @@ async def qa_stats(
             ROUND(AVG(pwin_tp2)::numeric, 1) AS avg_pwin_tp2
         FROM signals
         WHERE fired_at >= :cutoff
-          AND confidence IS NOT NULL
-        GROUP BY FLOOR(confidence / 10.0)
-        ORDER BY FLOOR(confidence / 10.0)
+          AND COALESCE(pwin_tp1, confidence) IS NOT NULL
+        GROUP BY FLOOR(COALESCE(pwin_tp1, confidence) / 10.0)
+        ORDER BY FLOOR(COALESCE(pwin_tp1, confidence) / 10.0)
     """), {"cutoff": cutoff})
 
     indicator_rows = await db.execute(text(f"""
@@ -521,7 +521,7 @@ async def false_positives(
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     rows = await db.execute(text(f"""
-        SELECT symbol, market, direction, timeframe, confidence, status,
+        SELECT symbol, market, direction, timeframe, COALESCE(pwin_tp1, confidence) AS confidence, status,
                pnl_pct, fired_at, closed_at,
                EXTRACT(EPOCH FROM (closed_at - fired_at))/3600 as hours_to_close
         FROM signals
@@ -558,11 +558,11 @@ async def indicator_performance(
     rows = await db.execute(text(f"""
         SELECT
             timeframe,
-            CASE WHEN confidence >= 85 THEN 'HIGH' ELSE 'MEDIUM' END as conf_band,
+            CASE WHEN COALESCE(pwin_tp1, confidence) >= 85 THEN 'HIGH' ELSE 'MEDIUM' END as conf_band,
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL}) as wins,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL}) as losses,
-            ROUND(AVG(confidence)::numeric, 1) as avg_confidence,
+            ROUND(AVG(COALESCE(pwin_tp1, confidence))::numeric, 1) as avg_confidence,
             ROUND(AVG(CASE WHEN status IN {CANONICAL_WIN_STATUS_SQL} THEN pnl_pct END)::numeric, 2) as avg_win_pnl,
             ROUND(AVG(CASE WHEN status IN {CANONICAL_LOSS_STATUS_SQL} THEN pnl_pct END)::numeric, 2) as avg_loss_pnl
         FROM signals
@@ -602,7 +602,7 @@ async def failure_analysis(
     sl_by_pair = await db.execute(text(f"""
         SELECT symbol, market, direction,
             COUNT(*) as sl_count,
-            ROUND(AVG(confidence)::numeric, 1) as avg_confidence_at_loss,
+            ROUND(AVG(COALESCE(pwin_tp1, confidence))::numeric, 1) as avg_confidence_at_loss,
             ROUND(AVG(rr_ratio)::numeric, 2) as avg_rr,
             ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - fired_at))/3600)::numeric, 1) as avg_hours_to_sl,
             MIN(EXTRACT(EPOCH FROM (closed_at - fired_at))/60)::int as fastest_sl_min
@@ -620,8 +620,8 @@ async def failure_analysis(
         SELECT timeframe,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL}) as sl_hits,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL}) as tp_hits,
-            ROUND(AVG(confidence) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL})::numeric, 1) as avg_conf_loss,
-            ROUND(AVG(confidence) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL})::numeric, 1) as avg_conf_win,
+            ROUND(AVG(COALESCE(pwin_tp1, confidence)) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL})::numeric, 1) as avg_conf_loss,
+            ROUND(AVG(COALESCE(pwin_tp1, confidence)) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL})::numeric, 1) as avg_conf_win,
             ROUND(AVG(rr_ratio) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL})::numeric, 2) as avg_rr_loss,
             ROUND(AVG(rr_ratio) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL})::numeric, 2) as avg_rr_win
         FROM signals
@@ -632,15 +632,15 @@ async def failure_analysis(
 
     # Overconfidence check: signals with high confidence that still hit SL
     overconfident_losses = await db.execute(text(f"""
-        SELECT symbol, direction, timeframe, confidence, rr_ratio, pnl_pct,
+        SELECT symbol, direction, timeframe, COALESCE(pwin_tp1, confidence) AS confidence, rr_ratio, pnl_pct,
                fired_at, closed_at,
                EXTRACT(EPOCH FROM (closed_at - fired_at))/3600 as hours_held
         FROM signals
         WHERE fired_at >= :cutoff
           AND status IN {CANONICAL_LOSS_STATUS_SQL}
-          AND confidence >= 85
+          AND COALESCE(pwin_tp1, confidence) >= 85
           AND closed_at IS NOT NULL
-        ORDER BY confidence DESC
+        ORDER BY COALESCE(pwin_tp1, confidence) DESC
         LIMIT 20
     """), {"cutoff": cutoff})
 
@@ -650,7 +650,7 @@ async def failure_analysis(
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_LOSS_STATUS_SQL}) as sl_hits,
             COUNT(*) FILTER (WHERE status IN {CANONICAL_WIN_STATUS_SQL}) as tp_hits,
-            ROUND(AVG(confidence)::numeric, 1) as avg_confidence
+            ROUND(AVG(COALESCE(pwin_tp1, confidence))::numeric, 1) as avg_confidence
         FROM signals
         WHERE fired_at >= :cutoff AND (status IN {CANONICAL_LOSS_STATUS_SQL} OR status IN {CANONICAL_WIN_STATUS_SQL})
         GROUP BY direction

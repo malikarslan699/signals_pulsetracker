@@ -219,7 +219,9 @@ async def signal_analytics(
 
     # Average confidence
     avg_conf_result = await db.execute(
-        select(func.avg(Signal.confidence)).where(Signal.fired_at >= from_date)
+        select(func.avg(func.coalesce(Signal.pwin_tp1, Signal.confidence))).where(
+            Signal.fired_at >= from_date
+        )
     )
     avg_confidence = avg_conf_result.scalar_one()
     avg_confidence = round(float(avg_confidence), 1) if avg_confidence else 0.0

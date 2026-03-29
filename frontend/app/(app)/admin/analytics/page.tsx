@@ -37,7 +37,7 @@ export default function AdminAnalyticsPage() {
           icon={<Activity className="h-3.5 w-3.5" />}
         />
         <KPICard
-          label="Avg Confidence"
+          label="Avg P(TP1)"
           value={isLoading ? "--" : `${data?.avg_confidence ?? 0}%`}
           icon={<Target className="h-3.5 w-3.5" />}
         />

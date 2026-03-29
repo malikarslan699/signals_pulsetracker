@@ -120,7 +120,7 @@ export default function AlertsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="text-2xs font-medium text-text-muted uppercase tracking-wider mb-1 block">
-                Min Confidence: <span className="font-mono text-long">{form.min_confidence}</span>
+                Min P(TP1): <span className="font-mono text-long">{form.min_confidence}</span>
               </label>
               <input
                 type="range"
@@ -164,7 +164,7 @@ export default function AlertsPage() {
                 Timeframes
               </label>
               <div className="flex gap-1 flex-wrap">
-                {["5m", "15m", "1H", "4H", "1D"].map((tf) => (
+                {["15m", "1H", "4H", "1D"].map((tf) => (
                   <button
                     key={tf}
                     onClick={() =>
@@ -234,7 +234,7 @@ export default function AlertsPage() {
               <div className="flex items-center justify-between px-3 py-2">
                 <div className="flex items-center gap-3 flex-wrap text-xs">
                   <div className="flex items-center gap-1">
-                    <span className="text-2xs text-text-muted">Confidence ≥</span>
+                    <span className="text-2xs text-text-muted">P(TP1) ≥</span>
                     <span className="font-mono font-semibold text-text-primary">
                       {alert.min_confidence}%
                     </span>

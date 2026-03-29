@@ -293,7 +293,7 @@ export default function ScannerPage() {
               Add
             </button>
             <div className="inline-flex items-center gap-1">
-              {["5m", "15m", "1H", "4H"].map((tf) => (
+              {["15m", "1H", "4H"].map((tf) => (
                 <button
                   key={tf}
                   onClick={() => setWatchTf(tf)}
@@ -416,7 +416,7 @@ export default function ScannerPage() {
               <div>
                 <label className="text-xs text-text-muted mb-1.5 block">Timeframe</label>
                 <div className="flex flex-wrap gap-1">
-                  {["ALL", "5m", "15m", "1H", "4H"].map((tf) => (
+                  {["ALL", "15m", "1H", "4H"].map((tf) => (
                     <button
                       key={tf}
                       onClick={() => setFilterTf(tf)}
