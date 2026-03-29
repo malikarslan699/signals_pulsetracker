@@ -557,6 +557,17 @@ async def _scan_symbol_async(
                         )
                         continue
 
+                    # ── Cross-TF conflict suppression ───────────────────
+                    # Block if an opposite-direction signal is already open
+                    opposite_dir = 'SHORT' if signal.direction == 'LONG' else 'LONG'
+                    conflict_keys = _r.keys(f"signal:open:{symbol}:{opposite_dir}:*")
+                    if conflict_keys:
+                        logger.debug(
+                            f"[SCANNER] Cross-TF conflict: {symbol} {opposite_dir} already open, "
+                            f"blocking {signal.direction} {tf}"
+                        )
+                        continue
+
                     candidate_signals.append({
                         'signal': signal,
                         'tf': tf,

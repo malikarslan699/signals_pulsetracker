@@ -135,6 +135,12 @@ def revalidate_active_signals():
                         f"Price approached SL by {sl_approach_frac*100:.0f}% of risk distance "
                         f"(entry={entry:.5g}, current={current_price:.5g}, sl={sl:.5g})"
                     )
+                elif entry_miss_frac >= ENTRY_MISS_THRESHOLD and status == 'CREATED':
+                    # Entry was never filled and price moved far past TP1 — setup is stale
+                    invalidation_reason = (
+                        f"Entry missed: price moved {entry_miss_frac*100:.0f}% past TP1 "
+                        f"without filling (entry={entry:.5g}, current={current_price:.5g})"
+                    )
 
                 if invalidation_reason:
                     _invalidate_signal(r, signal, invalidation_reason, active_member)

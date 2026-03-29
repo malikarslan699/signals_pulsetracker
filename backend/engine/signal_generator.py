@@ -174,7 +174,7 @@ class SignalGenerator:
             htf_context=htf_context,
         )
         confidence = calibrated.pwin_tp1
-        if confidence < max(75, self.MIN_CONFIDENCE):
+        if confidence < self.MIN_CONFIDENCE:
             return None
 
         now = datetime.now(timezone.utc)
@@ -326,7 +326,7 @@ class SignalGenerator:
         long_c = int(long_score.confidence or 0)
         short_c = int(short_score.confidence or 0)
         best = max(long_c, short_c)
-        if best < max(60, self.MIN_CONFIDENCE - 10):
+        if best < self.MIN_CONFIDENCE - 10:
             return None
         if abs(long_c - short_c) < self.MIN_DIRECTION_GAP:
             return None
@@ -603,20 +603,13 @@ class SignalGenerator:
             return min(cap, total)
 
         score = 0
-        score += capped_sum(winner.trend_scores, 24)
+        score += capped_sum(winner.trend_scores, 16)
         score += capped_sum(winner.structure_scores, 22)
         score += capped_sum(winner.ict_scores, 28)
-        score += capped_sum(winner.momentum_scores, 8)
-        score += capped_sum(winner.volume_scores, 8)
-        score += capped_sum(winner.volatility_scores, 6)
+        score += capped_sum(winner.momentum_scores, 6)
+        score += capped_sum(winner.volume_scores, 6)
+        score += capped_sum(winner.volatility_scores, 5)
         score += min(4, capped_sum(winner.fibonacci_scores, 4))
-
-        if entry_type == "OTE_RETRACE":
-            score += 4
-        elif entry_type == "ORDER_BLOCK":
-            score += 3
-        elif entry_type == "FVG_RETEST":
-            score += 2
 
         one_h = htf_context.get("1H")
         four_h = htf_context.get("4H")

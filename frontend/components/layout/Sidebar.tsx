@@ -10,6 +10,7 @@ import {
   Bell,
   Settings2,
   Shield,
+  Radio,
   X,
 } from "lucide-react";
 import { useUserStore } from "@/store/userStore";
@@ -21,6 +22,7 @@ interface SidebarProps {
 
 const BASE_NAV_ITEMS = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Live Chart", href: "/live", icon: Radio },
   { label: "Scanner", href: "/scanner", icon: Search },
   { label: "Signal History", href: "/history", icon: History },
   { label: "Trading Stats", href: "/stats", icon: BarChart2 },

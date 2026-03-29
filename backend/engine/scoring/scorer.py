@@ -712,56 +712,6 @@ class MasterScorer:
         except Exception:
             pass
 
-        # ── 3d. SMA Cross ────────────────────────────────────────────────
-        try:
-            sma_res = self._sma_cross(closes)
-            is_gc = sma_res.get('is_golden_cross', False)
-            is_dc = sma_res.get('is_death_cross', False)
-            sma_dir = sma_res.get('direction', 'neutral')
-
-            trend_long.append(IndicatorScore(
-                name='SMA Cross', category='Trend',
-                score=8 if is_gc else (4 if sma_dir == 'bull' else 0),
-                max_score=8,
-                triggered=is_gc,
-                details='Golden Cross' if is_gc else (
-                    'SMA bullish alignment' if sma_dir == 'bull' else ''
-                ),
-            ))
-            trend_short.append(IndicatorScore(
-                name='SMA Cross', category='Trend',
-                score=8 if is_dc else (4 if sma_dir == 'bear' else 0),
-                max_score=8,
-                triggered=is_dc,
-                details='Death Cross' if is_dc else (
-                    'SMA bearish alignment' if sma_dir == 'bear' else ''
-                ),
-            ))
-        except Exception:
-            pass
-
-        # ── 3e. Hull MA ──────────────────────────────────────────────────
-        try:
-            hma_res = self._hma_direction(closes)
-            is_rising = hma_res.get('is_rising', False)
-            changed = hma_res.get('direction_changed', False)
-
-            trend_long.append(IndicatorScore(
-                name='Hull MA', category='Trend',
-                score=6 if is_rising else 0,
-                max_score=6,
-                triggered=is_rising,
-                details='HMA Rising' + (' — Direction just turned up' if changed and is_rising else ''),
-            ))
-            trend_short.append(IndicatorScore(
-                name='Hull MA', category='Trend',
-                score=6 if not is_rising else 0,
-                max_score=6,
-                triggered=not is_rising,
-                details='HMA Falling' + (' — Direction just turned down' if changed and not is_rising else ''),
-            ))
-        except Exception:
-            pass
 
         # ================================================================
         # SECTION 4 — MOMENTUM  (max ~52 pts)
@@ -831,71 +781,6 @@ class MasterScorer:
         except Exception:
             pass
 
-        # ── 4c. Stochastic RSI ───────────────────────────────────────────
-        try:
-            stoch = self._stochastic_rsi(closes)
-            k_cur = stoch.get('k_current', 50.0)
-            stoch_bull = stoch.get('bull_cross', False)
-            stoch_bear = stoch.get('bear_cross', False)
-
-            mom_long.append(IndicatorScore(
-                name='Stochastic RSI', category='Momentum',
-                score=stoch.get('score_long', 0), max_score=8,
-                triggered=stoch_bull,
-                details=f"StochRSI K: {k_cur:.1f}" + (' — Bull cross' if stoch_bull else ''),
-            ))
-            mom_short.append(IndicatorScore(
-                name='Stochastic RSI', category='Momentum',
-                score=stoch.get('score_short', 0), max_score=8,
-                triggered=stoch_bear,
-                details=f"StochRSI K: {k_cur:.1f}" + (' — Bear cross' if stoch_bear else ''),
-            ))
-        except Exception:
-            pass
-
-        # ── 4d. CCI ───────────────────────────────────────────────────────
-        try:
-            cci_res = self._cci(highs, lows, closes)
-            cci_val = cci_res.get('current', 0.0)
-            cci_oversold = cci_res.get('is_oversold', False) or cci_res.get('crossed_oversold', False)
-            cci_overbought = cci_res.get('is_overbought', False) or cci_res.get('crossed_overbought', False)
-
-            mom_long.append(IndicatorScore(
-                name='CCI', category='Momentum',
-                score=cci_res.get('score_long', 0), max_score=6,
-                triggered=cci_oversold,
-                details=f"CCI: {cci_val:.0f}" + (' — Oversold bounce' if cci_oversold else ''),
-            ))
-            mom_short.append(IndicatorScore(
-                name='CCI', category='Momentum',
-                score=cci_res.get('score_short', 0), max_score=6,
-                triggered=cci_overbought,
-                details=f"CCI: {cci_val:.0f}" + (' — Overbought reversal' if cci_overbought else ''),
-            ))
-        except Exception:
-            pass
-
-        # ── 4e. Williams %R ──────────────────────────────────────────────
-        try:
-            wr = self._williams_r(highs, lows, closes)
-            wr_val = wr.get('current', -50.0)
-            wr_os = wr.get('is_oversold', False)
-            wr_ob = wr.get('is_overbought', False)
-
-            mom_long.append(IndicatorScore(
-                name='Williams %R', category='Momentum',
-                score=wr.get('score_long', 0), max_score=5,
-                triggered=wr_os,
-                details=f"W%R: {wr_val:.1f}" + (' — Oversold' if wr_os else ''),
-            ))
-            mom_short.append(IndicatorScore(
-                name='Williams %R', category='Momentum',
-                score=wr.get('score_short', 0), max_score=5,
-                triggered=wr_ob,
-                details=f"W%R: {wr_val:.1f}" + (' — Overbought' if wr_ob else ''),
-            ))
-        except Exception:
-            pass
 
         # ── 4f. Money Flow Index ─────────────────────────────────────────
         try:
@@ -978,26 +863,6 @@ class MasterScorer:
         except Exception:
             pass
 
-        # ── 5c. Donchian Channel Breakout ─────────────────────────────────
-        try:
-            dc = self._donchian_channels(highs, lows)
-            bo_up = dc.get('breakout_up', False)
-            bo_dn = dc.get('breakout_down', False)
-
-            vol_long.append(IndicatorScore(
-                name='Donchian Breakout', category='Volatility',
-                score=dc.get('score_long', 0), max_score=7,
-                triggered=bo_up,
-                details='Donchian channel breakout — upside' if bo_up else '',
-            ))
-            vol_short.append(IndicatorScore(
-                name='Donchian Breakout', category='Volatility',
-                score=dc.get('score_short', 0), max_score=7,
-                triggered=bo_dn,
-                details='Donchian channel breakout — downside' if bo_dn else '',
-            ))
-        except Exception:
-            pass
 
         # ── 5d. ATR Volatility (also used for trade levels) ──────────────
         atr_result: dict = {}
@@ -1054,27 +919,6 @@ class MasterScorer:
         except Exception:
             pass
 
-        # ── 6b. OBV ──────────────────────────────────────────────────────
-        try:
-            obv_res = self._obv(closes, volumes)
-            obv_trend = obv_res.get('trend', 'neutral')
-
-            volume_long.append(IndicatorScore(
-                name='OBV', category='Volume',
-                score=obv_res.get('score_long', 0), max_score=6,
-                triggered=obv_trend == 'bull',
-                details=f"OBV trend: {obv_trend}"
-                        + (' — Accumulation confirmed' if obv_trend == 'bull' else ''),
-            ))
-            volume_short.append(IndicatorScore(
-                name='OBV', category='Volume',
-                score=obv_res.get('score_short', 0), max_score=6,
-                triggered=obv_trend == 'bear',
-                details=f"OBV trend: {obv_trend}"
-                        + (' — Distribution confirmed' if obv_trend == 'bear' else ''),
-            ))
-        except Exception:
-            pass
 
         # ── 6c. VWAP ─────────────────────────────────────────────────────
         try:
@@ -1105,27 +949,6 @@ class MasterScorer:
         except Exception:
             pass
 
-        # ── 6d. CMF ──────────────────────────────────────────────────────
-        try:
-            cmf_res = self._cmf(highs, lows, closes, volumes)
-            cmf_val = cmf_res.get('current', 0.0)
-            cmf_pos = cmf_res.get('is_positive', False)
-            cmf_neg = cmf_res.get('is_negative', False)
-
-            volume_long.append(IndicatorScore(
-                name='CMF', category='Volume',
-                score=cmf_res.get('score_long', 0), max_score=5,
-                triggered=cmf_pos,
-                details=f"CMF: {cmf_val:.3f}" + (' — Positive flow' if cmf_pos else ''),
-            ))
-            volume_short.append(IndicatorScore(
-                name='CMF', category='Volume',
-                score=cmf_res.get('score_short', 0), max_score=5,
-                triggered=cmf_neg,
-                details=f"CMF: {cmf_val:.3f}" + (' — Negative flow' if cmf_neg else ''),
-            ))
-        except Exception:
-            pass
 
         # ================================================================
         # SECTION 7 — FIBONACCI  (max ~10 pts)

@@ -152,6 +152,12 @@ class SignalService:
         if filters.status:
             query = query.where(Signal.status == filters.status)
             count_query = count_query.where(Signal.status == filters.status)
+        else:
+            # By default exclude EXPIRED and INVALIDATED signals — they never
+            # formed a real entry and clutter the active signal view.
+            # Users can explicitly filter ?status=EXPIRED to see them in history.
+            query = query.where(Signal.status.notin_(['EXPIRED', 'INVALIDATED']))
+            count_query = count_query.where(Signal.status.notin_(['EXPIRED', 'INVALIDATED']))
 
         if filters.from_date:
             query = query.where(Signal.fired_at >= filters.from_date)

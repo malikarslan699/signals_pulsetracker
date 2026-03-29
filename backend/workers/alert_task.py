@@ -209,15 +209,27 @@ async def _send_signal_alerts_async(signal_id: str) -> dict:
             logger.warning(f"Signal {signal_id} not found for alerting")
             return {'signal_id': signal_id, 'alerts_sent': 0, 'error': 'Signal not found'}
 
-        message = format_signal_message(signal_data)
-        confidence = signal_data.get('pwin_tp1', signal_data.get('confidence', 0))
+        # ── Quality gate: only send ULTRA_HIGH signals ───────────────────
+        # Prevents fake/manipulation entries and low-quality noise from
+        # reaching users. Only signals with confidence_band == ULTRA_HIGH
+        # and confidence >= 85 are dispatched to Telegram.
+        confidence_band = signal_data.get('confidence_band', '')
+        confidence = int(signal_data.get('pwin_tp1', signal_data.get('confidence', 0)) or 0)
+        if confidence_band != 'ULTRA_HIGH' or confidence < 85:
+            logger.info(
+                f"[ALERT] Skipping {signal_data.get('symbol')} {signal_data.get('direction')} "
+                f"— below ULTRA_HIGH threshold (band={confidence_band}, confidence={confidence})"
+            )
+            return {'signal_id': signal_id, 'alerts_sent': 0, 'skipped': True, 'reason': 'below_ultra_high'}
 
-        # Always send to VIP channel if confidence >= 70
-        if TELEGRAM_VIP_CHANNEL_ID and confidence >= 70:
+        message = format_signal_message(signal_data)
+
+        # Send to VIP channel (already gated to ULTRA_HIGH above)
+        if TELEGRAM_VIP_CHANNEL_ID:
             success = await _send_telegram_message(TELEGRAM_VIP_CHANNEL_ID, message)
             if success:
                 alerts_sent += 1
-                logger.info(f"VIP alert sent for {signal_data.get('symbol')} {signal_data.get('direction')}")
+                logger.info(f"[ALERT] VIP sent: {signal_data.get('symbol')} {signal_data.get('direction')} ({confidence}% ULTRA_HIGH)")
 
         # Send to individual users with matching alert configs
         try:

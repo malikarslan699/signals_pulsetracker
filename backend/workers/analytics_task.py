@@ -29,21 +29,25 @@ def update_win_rates():
 
         engine = create_engine(db_url)
 
+        # COMPLETED_SQL: only real trades (won or lost) — excludes EXPIRED/INVALIDATED
+        # which never formed a real entry and should not affect accuracy metrics
+        COMPLETED_SQL = f"(SELECT id FROM signals WHERE status IN {WIN_SQL} OR status IN {LOSS_SQL})"
+
         with engine.connect() as conn:
-            # Overall stats
-            total = conn.execute(text(f"SELECT COUNT(*) FROM signals WHERE status NOT IN {OPEN_SQL}")).scalar()
+            # Overall stats — only count real completed trades
+            total = conn.execute(text(f"SELECT COUNT(*) FROM signals WHERE status IN {WIN_SQL} OR status IN {LOSS_SQL}")).scalar()
             wins = conn.execute(text(f"SELECT COUNT(*) FROM signals WHERE status IN {WIN_SQL}")).scalar()
             losses = conn.execute(text(f"SELECT COUNT(*) FROM signals WHERE status IN {LOSS_SQL}")).scalar()
 
             win_rate = (wins / total * 100) if total > 0 else 0
 
-            # By timeframe
+            # By timeframe — exclude EXPIRED/INVALIDATED from totals
             tf_stats_rows = conn.execute(text(f"""
                 SELECT timeframe,
                        COUNT(*) as total,
                        SUM(CASE WHEN status IN {WIN_SQL} THEN 1 ELSE 0 END) as wins
                 FROM signals
-                WHERE status NOT IN {OPEN_SQL}
+                WHERE status IN {WIN_SQL} OR status IN {LOSS_SQL}
                 GROUP BY timeframe
             """)).fetchall()
 
@@ -55,13 +59,13 @@ def update_win_rates():
                     'win_rate': round(row.wins / row.total * 100, 1) if row.total > 0 else 0,
                 }
 
-            # By direction
+            # By direction — exclude EXPIRED/INVALIDATED from totals
             dir_stats_rows = conn.execute(text(f"""
                 SELECT direction,
                        COUNT(*) as total,
                        SUM(CASE WHEN status IN {WIN_SQL} THEN 1 ELSE 0 END) as wins
                 FROM signals
-                WHERE status NOT IN {OPEN_SQL}
+                WHERE status IN {WIN_SQL} OR status IN {LOSS_SQL}
                 GROUP BY direction
             """)).fetchall()
 
@@ -73,11 +77,11 @@ def update_win_rates():
                     'win_rate': round(row.wins / row.total * 100, 1) if row.total > 0 else 0,
                 }
 
-            # Recent 7 days
+            # Recent 7 days — exclude EXPIRED/INVALIDATED
             recent_total = conn.execute(text(f"""
                 SELECT COUNT(*) FROM signals
                 WHERE fired_at > NOW() - INTERVAL '7 days'
-                  AND status NOT IN {OPEN_SQL}
+                  AND (status IN {WIN_SQL} OR status IN {LOSS_SQL})
             """)).scalar()
 
             recent_wins = conn.execute(text(f"""
@@ -136,7 +140,7 @@ def refresh_pair_health(days: int = 45):
                         p.symbol,
                         p.market,
                         p.manual_override,
-                        COUNT(s.id) FILTER (WHERE s.status NOT IN {OPEN_SQL}) AS total_closed,
+                        COUNT(s.id) FILTER (WHERE s.status IN {WIN_SQL} OR s.status IN {LOSS_SQL}) AS total_closed,
                         COUNT(s.id) FILTER (WHERE s.status IN {WIN_SQL}) AS wins,
                         COUNT(s.id) FILTER (WHERE s.status IN {LOSS_SQL}) AS losses,
                         ROUND(AVG(s.pwin_tp1)::numeric, 2) AS avg_pwin_tp1,
