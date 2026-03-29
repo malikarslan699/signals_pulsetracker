@@ -133,33 +133,25 @@ class MasterScorer:
         # ── Trend ──────────────────────────────────────────────────────────
         from ..indicators.trend import (
             ema_stack,
-            sma_cross,
-            hma_direction,
             supertrend,
             ichimoku,
         )
         # ── Momentum ───────────────────────────────────────────────────────
         from ..indicators.momentum import (
             rsi_analysis,
-            stochastic_rsi,
             macd,
-            cci,
-            williams_r,
             mfi,
         )
         # ── Volatility ─────────────────────────────────────────────────────
         from ..indicators.volatility import (
             bollinger_bands,
             keltner_channels,
-            donchian_channels,
             atr_analysis,
         )
         # ── Volume ─────────────────────────────────────────────────────────
         from ..indicators.volume import (
             volume_spike,
-            obv,
             vwap,
-            cmf,
         )
         # ── Structure ──────────────────────────────────────────────────────
         from ..indicators.structure import (
